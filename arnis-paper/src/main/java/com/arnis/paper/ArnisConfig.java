@@ -21,6 +21,13 @@ public final class ArnisConfig {
     public final int spawnX;
     public final int spawnZ;
 
+    // Automatic streaming (Phase 2).
+    public final boolean streamingEnabled;
+    public final int prefetchRadius;
+    public final int workers;
+    public final int intervalTicks;
+    public final int maxPerScan;
+
     private ArnisConfig(
             String worldName,
             double originLat,
@@ -31,7 +38,12 @@ public final class ArnisConfig {
             String arnisBinary,
             boolean bakeSpawnOnEnable,
             int spawnX,
-            int spawnZ) {
+            int spawnZ,
+            boolean streamingEnabled,
+            int prefetchRadius,
+            int workers,
+            int intervalTicks,
+            int maxPerScan) {
         this.worldName = worldName;
         this.originLat = originLat;
         this.originLng = originLng;
@@ -42,6 +54,11 @@ public final class ArnisConfig {
         this.bakeSpawnOnEnable = bakeSpawnOnEnable;
         this.spawnX = spawnX;
         this.spawnZ = spawnZ;
+        this.streamingEnabled = streamingEnabled;
+        this.prefetchRadius = prefetchRadius;
+        this.workers = workers;
+        this.intervalTicks = intervalTicks;
+        this.maxPerScan = maxPerScan;
     }
 
     /** Reads an {@link ArnisConfig} from a Bukkit {@link FileConfiguration}. */
@@ -56,6 +73,11 @@ public final class ArnisConfig {
                 c.getString("arnis-binary", "arnis"),
                 c.getBoolean("bake-spawn-on-enable", true),
                 c.getInt("spawn.x", 0),
-                c.getInt("spawn.z", 0));
+                c.getInt("spawn.z", 0),
+                c.getBoolean("streaming.enabled", true),
+                Math.max(0, c.getInt("streaming.prefetch-radius", 2)),
+                Math.max(1, c.getInt("streaming.workers", 2)),
+                Math.max(1, c.getInt("streaming.interval-ticks", 40)),
+                Math.max(1, c.getInt("streaming.max-per-scan", 8)));
     }
 }

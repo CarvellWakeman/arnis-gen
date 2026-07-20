@@ -32,3 +32,18 @@ bake-spawn-on-enable: true
 spawn:
   x: 8
   z: 8
+
+# --- Automatic streaming (Phase 2) ---
+streaming:
+  # Bake regions ahead of players automatically as they explore.
+  enabled: true
+  # How many regions out from each player to keep baked (1 region = 512 blocks).
+  # Keep this comfortably larger than the server view-distance so regions are
+  # baked before the server ever loads them.
+  prefetch-radius: 2
+  # Concurrent bake subprocesses. Each one fetches map data and uses a CPU core.
+  workers: 2
+  # How often the tracker scans player positions, in server ticks (20 = 1s).
+  interval-ticks: 40
+  # Cap on new bakes queued per scan, to avoid flooding on teleports.
+  max-per-scan: 8

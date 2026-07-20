@@ -2,27 +2,30 @@ package com.arnis.paper;
 
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
-import org.bukkit.command.CommandSender;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.generator.ChunkGenerator;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitTask;
 
 import java.io.File;
-import java.util.List;
 
 /**
- * Phase 1 of the on-demand server terrain generator: a minimal Paper plugin that
- * bootstraps a void world and bakes arnis region files into it on request.
+ * The on-demand server terrain generator.
  *
- * <p>Baked terrain streams in as chunks load fresh. Hot-reloading a region the
- * server already has resident is best-effort (see {@link #reloadRegionChunks});
- * a server restart always loads baked regions cleanly. Automatic, safe streaming
- * is Phase 2.
+ * <p>Bootstraps a void world and streams arnis-baked region files into it: a
+ * {@link PlayerTracker} bakes regions ahead of players via a bounded
+ * {@link BakeService}, so terrain appears as they explore. Regions are only baked
+ * before the server loads them, so the baked files are read cleanly on approach —
+ * no restart needed for streamed terrain. The spawn region (loaded at startup)
+ * and manual prewarms are the exception: they use a best-effort reload, with a
+ * restart as the reliable fallback.
  */
 public final class ArnisPlugin extends JavaPlugin {
 
     private ArnisConfig config;
     private RegionBaker baker;
+    private BakeService bakeService;
+    private BukkitTask trackerTask;
     private World arnisWorld;
 
     @Override
@@ -30,6 +33,7 @@ public final class ArnisPlugin extends JavaPlugin {
         saveDefaultConfig();
         config = ArnisConfig.from(getConfig());
         baker = new RegionBaker(this, config);
+        bakeService = new BakeService(this, baker, config.workers);
 
         getLogger().info("Enabling: origin " + config.originLat + "," + config.originLng
                 + " -> MC (0,0), scale " + config.scale + " blocks/m, arnis '" + config.arnisBinary + "'");
@@ -39,9 +43,10 @@ public final class ArnisPlugin extends JavaPlugin {
                 .createWorld();
         if (arnisWorld == null) {
             getLogger().severe("Failed to create/load arnis world '" + config.worldName + "'.");
-        } else {
-            getLogger().info("Arnis world '" + config.worldName + "' ready.");
+            return;
         }
+        getLogger().info("Arnis world '" + config.worldName + "' ready.");
+        bakeService.initFromDisk(arnisWorld.getWorldFolder());
 
         PluginCommand command = getCommand("arnis");
         if (command != null) {
@@ -50,13 +55,26 @@ public final class ArnisPlugin extends JavaPlugin {
             getLogger().severe("Command 'arnis' is not defined in plugin.yml.");
         }
 
-        if (arnisWorld != null && config.bakeSpawnOnEnable) {
-            bakeSpawnRegionAsync();
+        if (config.bakeSpawnOnEnable) {
+            bakeSpawnRegion();
+        }
+        if (config.streamingEnabled) {
+            trackerTask = new PlayerTracker(arnisWorld, bakeService, config.prefetchRadius, config.maxPerScan)
+                    .runTaskTimer(this, config.intervalTicks, config.intervalTicks);
+            getLogger().info("Streaming enabled: prefetch radius " + config.prefetchRadius
+                    + " region(s), " + config.workers + " worker(s), scan every "
+                    + config.intervalTicks + " ticks.");
         }
     }
 
     @Override
     public void onDisable() {
+        if (trackerTask != null) {
+            trackerTask.cancel();
+        }
+        if (bakeService != null) {
+            bakeService.shutdown();
+        }
         getLogger().info("Arnis generator disabled.");
     }
 
@@ -79,78 +97,53 @@ public final class ArnisPlugin extends JavaPlugin {
         return arnisWorld;
     }
 
+    public BakeService bakeService() {
+        return bakeService;
+    }
+
     /** Bakes the spawn region, then sets spawn Y from the terrain and reloads it. */
-    private void bakeSpawnRegionAsync() {
+    private void bakeSpawnRegion() {
         int rx = config.spawnX >> 9;
         int rz = config.spawnZ >> 9;
         File worldDir = arnisWorld.getWorldFolder();
-        getServer().getScheduler().runTaskAsynchronously(this, () -> {
-            RegionBaker.Result res = baker.bake(worldDir, rx, rz);
-            getServer().getScheduler().runTask(this, () -> {
-                if (res.ok) {
-                    // The bake itself is the success; the region file is on disk now.
-                    // Loading it into the live world and moving spawn onto the terrain
-                    // is best-effort (see reloadRegionChunks).
-                    getLogger().info("Spawn region baked.");
-                    try {
-                        reloadRegionChunks(arnisWorld, rx, rz);
-                        int y = arnisWorld.getHighestBlockYAt(config.spawnX, config.spawnZ) + 1;
-                        arnisWorld.setSpawnLocation(config.spawnX, y, config.spawnZ);
-                        getLogger().info("Spawn set to " + config.spawnX + "," + y + "," + config.spawnZ);
-                    } catch (Exception e) {
-                        getLogger().warning("Post-bake spawn setup failed (terrain is baked; "
-                                + "restart to load it): " + e.getMessage());
-                    }
-                } else {
-                    getLogger().warning("Spawn region bake failed; the world will be void at spawn.");
+        bakeService.submit(worldDir, rx, rz, ok -> {
+            if (ok) {
+                // The bake itself is the success; the region file is on disk now.
+                getLogger().info("Spawn region baked.");
+                try {
+                    reloadRegionChunks(rx, rz);
+                    int y = arnisWorld.getHighestBlockYAt(config.spawnX, config.spawnZ) + 1;
+                    arnisWorld.setSpawnLocation(config.spawnX, y, config.spawnZ);
+                    getLogger().info("Spawn set to " + config.spawnX + "," + y + "," + config.spawnZ);
+                } catch (Exception e) {
+                    getLogger().warning("Post-bake spawn setup failed (terrain is baked; "
+                            + "restart to load it): " + e.getMessage());
                 }
-            });
-        });
-    }
-
-    /**
-     * Bakes a list of regions off-thread, then reloads their chunks on the main
-     * thread and reports back to {@code feedback}.
-     */
-    public void prewarmAsync(World world, List<int[]> regions, CommandSender feedback) {
-        File worldDir = world.getWorldFolder();
-        getServer().getScheduler().runTaskAsynchronously(this, () -> {
-            int ok = 0;
-            for (int[] r : regions) {
-                if (baker.bake(worldDir, r[0], r[1]).ok) {
-                    ok++;
-                }
+            } else {
+                getLogger().warning("Spawn region bake failed; the world will be void at spawn.");
             }
-            final int baked = ok;
-            getServer().getScheduler().runTask(this, () -> {
-                for (int[] r : regions) {
-                    reloadRegionChunks(world, r[0], r[1]);
-                }
-                feedback.sendMessage("Prewarm complete: " + baked + "/" + regions.size()
-                        + " region(s) baked. Newly entered chunks will show the baked terrain; "
-                        + "restart the server if resident chunks still look void.");
-            });
         });
     }
 
     /**
      * Best-effort reload of a region's 32x32 chunks from disk so a freshly baked
-     * region appears without a restart. Discards the in-memory (void) copy first.
+     * region appears without a restart. Used for regions the server already holds
+     * resident (spawn, manual prewarm). Streaming never needs this: prefetched
+     * regions are unloaded and load cleanly on approach.
      *
-     * <p>Limitation: the server may keep a region file handle cached, so a chunk
-     * it has already persisted may not pick up arnis's external write until a
-     * restart. Reliable live streaming is Phase 2.
+     * <p>Limitation: the server may keep a region file handle cached, so a chunk it
+     * has already persisted may not pick up arnis's external write until a restart.
      */
-    private void reloadRegionChunks(World world, int rx, int rz) {
+    public void reloadRegionChunks(int rx, int rz) {
         int baseCx = rx * 32;
         int baseCz = rz * 32;
         for (int cx = baseCx; cx < baseCx + 32; cx++) {
             for (int cz = baseCz; cz < baseCz + 32; cz++) {
-                if (world.isChunkLoaded(cx, cz)) {
-                    world.unloadChunk(cx, cz, false); // drop the void copy without saving
+                if (arnisWorld.isChunkLoaded(cx, cz)) {
+                    arnisWorld.unloadChunk(cx, cz, false); // drop the void copy without saving
                 }
-                world.loadChunk(cx, cz);            // read the baked data from disk
-                world.unloadChunkRequest(cx, cz);    // let it unload again if unused
+                arnisWorld.loadChunk(cx, cz);            // read the baked data from disk
+                arnisWorld.unloadChunkRequest(cx, cz);    // let it unload again if unused
             }
         }
     }

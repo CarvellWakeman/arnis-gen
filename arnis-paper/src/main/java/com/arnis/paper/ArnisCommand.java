@@ -7,16 +7,14 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
 import java.io.File;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * The {@code /arnis} admin command.
  *
  * <ul>
- *   <li>{@code /arnis status} — show generator config and how many regions are baked.
+ *   <li>{@code /arnis status} — show generator config and bake-pool stats.
  *   <li>{@code /arnis prewarm [radius]} — bake the regions within {@code radius}
- *       (in regions) around the sender (or world spawn) ahead of exploration.
+ *       (in regions) around the sender (or world spawn) now, via the bake pool.
  * </ul>
  */
 public final class ArnisCommand implements CommandExecutor {
@@ -47,21 +45,21 @@ public final class ArnisCommand implements CommandExecutor {
     private boolean status(CommandSender sender) {
         ArnisConfig c = plugin.config();
         World world = plugin.arnisWorld();
-
-        int regionFiles = 0;
-        if (world != null) {
-            File regionDir = new File(world.getWorldFolder(), "region");
-            File[] files = regionDir.listFiles((dir, name) -> name.endsWith(".mca"));
-            if (files != null) {
-                regionFiles = files.length;
-            }
-        }
+        BakeService svc = plugin.bakeService();
 
         sender.sendMessage("Arnis generator:");
         sender.sendMessage("  world: " + c.worldName + (world != null ? " (loaded)" : " (not loaded)"));
         sender.sendMessage("  origin: " + c.originLat + ", " + c.originLng + " -> MC (0,0)");
         sender.sendMessage("  scale: " + c.scale + " blocks/m, margin: " + c.bakeMargin);
-        sender.sendMessage("  baked region files: " + regionFiles);
+        sender.sendMessage("  streaming: " + (c.streamingEnabled
+                ? "on (radius " + c.prefetchRadius + ", " + c.workers + " workers)"
+                : "off"));
+        if (svc != null) {
+            sender.sendMessage("  regions baked: " + svc.bakedCount()
+                    + " (in flight: " + svc.inFlightCount()
+                    + ", ok: " + svc.completedCount()
+                    + ", failed: " + svc.failedCount() + ")");
+        }
         sender.sendMessage("  arnis binary: " + c.arnisBinary);
         return true;
     }
@@ -96,17 +94,31 @@ public final class ArnisCommand implements CommandExecutor {
 
         int centerRx = centerX >> 9;
         int centerRz = centerZ >> 9;
+        File worldDir = world.getWorldFolder();
+        BakeService svc = plugin.bakeService();
 
-        List<int[]> regions = new ArrayList<>();
+        int queued = 0;
         for (int dz = -radius; dz <= radius; dz++) {
             for (int dx = -radius; dx <= radius; dx++) {
-                regions.add(new int[] {centerRx + dx, centerRz + dz});
+                int rx = centerRx + dx;
+                int rz = centerRz + dz;
+                if (svc.isKnown(rx, rz)) {
+                    continue;
+                }
+                final int frx = rx;
+                final int frz = rz;
+                // Prewarm may target regions the server holds resident, so reload them.
+                svc.submit(worldDir, rx, rz, ok -> {
+                    if (ok) {
+                        plugin.reloadRegionChunks(frx, frz);
+                    }
+                });
+                queued++;
             }
         }
 
-        sender.sendMessage("Prewarming " + regions.size() + " region(s) around region "
-                + centerRx + "," + centerRz + " (this runs in the background)...");
-        plugin.prewarmAsync(world, regions, sender);
+        sender.sendMessage("Queued " + queued + " region(s) for baking around region "
+                + centerRx + "," + centerRz + " (progress in the console).");
         return true;
     }
 }

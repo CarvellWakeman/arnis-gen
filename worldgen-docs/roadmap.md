@@ -40,9 +40,11 @@ just the scannable checklist of deliverables.
 - [x] **`VoidChunkGenerator`** — empty-air generator for the arnis world; only fills
   gaps not yet baked (chunk storage is consulted first, so a baked region loads verbatim).
 - [x] **`RegionBaker`** — runs `arnis --bake-region …` as a subprocess and parses the
-  `ARNIS_BAKE_RESULT` line. _(bounded worker pool + currently-loaded-region guard: Phase 2)_
-- [ ] **`PlayerTracker`** — computes the needed region set within a prefetch radius as
-  players move, and enqueues misses onto the bake queue (with dedupe + in-flight guard).
+  `ARNIS_BAKE_RESULT` line. Pooled + de-duplicated by `BakeService` (bounded worker
+  pool, `baked`/`in-flight` sets); the currently-loaded-region guard lives in `PlayerTracker`.
+- [x] **`PlayerTracker`** — bakes regions within a prefetch radius ahead of each player
+  (nearest-ring first, capped per scan), skipping regions already baked, in flight, or
+  loaded — so arnis never writes a `.mca` the server holds open.
 - [x] **`ArnisCommand`** — `/arnis status` and `/arnis prewarm [radius]` implemented.
   _(`reload`, `goto` pending)_
 - [ ] **`/arnis goto <lat> <lng>` (real-world navigation)** — teleport a player to the
@@ -88,8 +90,9 @@ just the scannable checklist of deliverables.
   into a world folder; verified via unit tests + a real end-to-end bake.
 - [x] **Phase 1 — Minimal plugin.** Paper void generator + `/arnis prewarm` invoking
   the subprocess; verified by the e2e smoke test against a live server.
-- [ ] **Phase 2 — Automatic streaming.** `PlayerTracker` prefetch + worker pool + safe
-  live region loading + data caching.
+- [x] **Phase 2 — Automatic streaming.** `PlayerTracker` prefetch + `BakeService` worker
+  pool + safe live region loading (bake ahead of the server so files load cleanly on
+  approach). _(arnis-side OSM/land-cover caching still pending — see §1 Global data caching)_
 - [ ] **Phase 3 — Polish.** Seam/margin tuning, region batching, self-hosted data,
   lighting/height docs, logging, README, test mode.
 
