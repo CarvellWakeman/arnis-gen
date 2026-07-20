@@ -71,6 +71,17 @@ It compiles the plugin as a side effect to
 4. Start the server once, then stop it (type `stop`). This generates
    `plugins/ArnisGen/config.yml`.
 
+Start the server from the server folder with:
+
+```
+java -Xms2G -Xmx2G -jar paper-1.21.1.jar --nogui
+```
+
+Adjust `-Xmx` (max heap) to taste — 2–4 GB is plenty for a small server. `--nogui`
+runs it headless in the terminal; omit it to get Paper's small GUI window. On
+Windows, use the JDK you installed (e.g. `"%JAVA_HOME%\bin\java.exe" -Xmx2G -jar
+paper-1.21.1.jar --nogui`) if `java` isn't on your `PATH`.
+
 ## Step 4 — configure `plugins/ArnisGen/config.yml`
 
 ```yaml
