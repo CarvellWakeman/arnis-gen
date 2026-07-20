@@ -7,7 +7,7 @@ description: On-demand real-world terrain generator backed by the arnis region b
 commands:
   arnis:
     description: Arnis terrain generator controls.
-    usage: /arnis <status|prewarm [radius]>
+    usage: /arnis <status|prewarm [radius]|goto <lat> <lng>|reload [radius]>
     permission: arnis.admin
 permissions:
   arnis.admin:

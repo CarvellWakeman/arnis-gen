@@ -47,16 +47,15 @@ just the scannable checklist of deliverables.
 - [x] **`PlayerTracker`** — bakes regions within a prefetch radius ahead of each player
   (nearest-ring first, capped per scan), skipping regions already baked, in flight, or
   loaded — so arnis never writes a `.mca` the server holds open.
-- [x] **`ArnisCommand`** — `/arnis status` and `/arnis prewarm [radius]` implemented.
-  _(`reload`, `goto` pending)_
-- [ ] **`/arnis goto <lat> <lng>` (real-world navigation)** — teleport a player to the
-  in-game location of a real-world coordinate. Forward-projects `(lat, lng)` through the
-  world's fixed Web Mercator origin (the same `WebMercatorProjection` the bake uses, so
-  the mapping is exact and consistent) to get Minecraft `(x, z)`, ensures that region is
-  baked (triggering an on-demand bake and awaiting it if needed), derives a safe surface
-  `y` from the terrain, then teleports. Accepts `lat,lng` or `lat lng`; reports the
-  resulting coordinates. A natural companion to a future reverse lookup (in-game position
-  → real-world lat/lng) for sharing/among players.
+- [x] **`ArnisCommand`** — `/arnis status`, `/arnis prewarm [radius]`, `/arnis goto
+  <lat> <lng>`, and `/arnis reload [radius]` implemented.
+- [x] **`/arnis goto <lat> <lng>` (real-world navigation)** — teleports a player to the
+  in-game location of a real-world coordinate. Forward-projects `(lat, lng)` through a
+  Java `Projection` that mirrors the Rust `WebMercatorProjection` exactly (verified:
+  origin → MC (0,0), east → +x, north → -z, scale linear; cross-checked live in the e2e),
+  ensures that region is baked (awaiting an in-flight bake via `BakeService`), derives a
+  surface `y`, then teleports. Accepts `lat,lng` or `lat lng`; console reports the mapped
+  coordinates instead of teleporting. _(future: reverse lookup in-game position → lat/lng)_
 - [x] **Plugin scaffolding** — `plugin.yml`, `config.yml` (origin lat/lon, scale, bake
   margin, ground level, arnis binary path, spawn, world), world bootstrap via
   `WorldCreator(...).generator(voidGen)`. _(persistent per-world `arnis.json` + worker

@@ -218,6 +218,34 @@ while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
     }
 }
 
+# After the spawn bake, exercise /arnis goto through the console: the configured
+# origin must map to Minecraft (0,0), which cross-checks the plugin's projection
+# against the Rust bake's coordinate frame end-to-end.
+$gotoOk = $false
+$statusSeen = $false
+if ($outcome -eq "ok") {
+    # First confirm arnis console commands dispatch at all, then check goto.
+    # Comma form avoids any space-before-negative parsing of the longitude.
+    try { $proc.StandardInput.WriteLine("arnis status"); $proc.StandardInput.Flush() } catch {}
+    Start-Sleep -Milliseconds 800
+    Info "Checking '/arnis goto $Origin' (origin should map to MC 0,0)..."
+    try { $proc.StandardInput.WriteLine("arnis goto $Origin"); $proc.StandardInput.Flush() } catch {}
+    $gsw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($gsw.Elapsed.TotalSeconds -lt 20 -and -not $gotoOk) {
+        $line = $null
+        if ($queue.TryDequeue([ref]$line)) {
+            $log.WriteLine($line); $log.Flush()
+            if ($line -match "Arnis generator:") { $statusSeen = $true }
+            if ($line -match "MC x=0 z=0") { $gotoOk = $true }
+        } elseif ($proc.HasExited) {
+            break
+        } else {
+            Start-Sleep -Milliseconds 200
+        }
+    }
+    Info "goto check: $gotoOk (console arnis dispatch: $statusSeen)"
+}
+
 Info "Stopping server..."
 try { if (-not $proc.HasExited) { $proc.StandardInput.WriteLine("stop"); $proc.StandardInput.Flush() } } catch {}
 if (-not $proc.WaitForExit(90000)) { try { $proc.Kill() } catch {} }
@@ -234,14 +262,14 @@ $regionExists = Test-Path $regionFile
 $regionSize = 0; if ($regionExists) { $regionSize = (Get-Item $regionFile).Length }
 
 Write-Host ""
-Info "Result: outcome=$outcome  region-file=$regionExists ($regionSize bytes)  log=$logPath"
+Info "Result: outcome=$outcome  region-file=$regionExists ($regionSize bytes)  goto=$gotoOk  log=$logPath"
 
-$pass = ($outcome -eq "ok") -and $regionExists -and ($regionSize -gt 0)
+$pass = ($outcome -eq "ok") -and $regionExists -and ($regionSize -gt 0) -and $gotoOk
 
 if (-not $KeepRun -and $pass) { Remove-Item $RunDir -Recurse -Force -ErrorAction SilentlyContinue }
 
 if ($pass) {
-    Write-Host "[e2e] PASS: server booted, arnis world created, spawn region baked ($regionSize bytes)." -ForegroundColor Green
+    Write-Host "[e2e] PASS: server booted, arnis world created, spawn region baked ($regionSize bytes), /arnis goto mapped origin to MC (0,0)." -ForegroundColor Green
     exit 0
 } else {
     Write-Host "[e2e] FAIL: outcome=$outcome (see $logPath; run dir kept)." -ForegroundColor Red

@@ -126,10 +126,15 @@ public final class ArnisPlugin extends JavaPlugin {
     }
 
     /**
-     * Best-effort reload of a region's 32x32 chunks from disk so a freshly baked
-     * region appears without a restart. Used for regions the server already holds
-     * resident (spawn, manual prewarm). Streaming never needs this: prefetched
-     * regions are unloaded and load cleanly on approach.
+     * Best-effort reflection of a freshly baked region in the live world: drops the
+     * stale (void) copies of only the chunks the server currently holds resident,
+     * so they re-read arnis's baked data from disk on next access. Used for regions
+     * the server already has loaded (spawn, manual prewarm/goto). Streaming never
+     * needs this — prefetched regions are unloaded and load cleanly on approach.
+     *
+     * <p>Deliberately does NOT force-load the region's chunks: loading all 1024 on
+     * the main thread would generate the unloaded ones and freeze the server.
+     * Unloaded chunks load fresh from disk on demand with no action here.
      *
      * <p>Limitation: the server may keep a region file handle cached, so a chunk it
      * has already persisted may not pick up arnis's external write until a restart.
@@ -140,10 +145,8 @@ public final class ArnisPlugin extends JavaPlugin {
         for (int cx = baseCx; cx < baseCx + 32; cx++) {
             for (int cz = baseCz; cz < baseCz + 32; cz++) {
                 if (arnisWorld.isChunkLoaded(cx, cz)) {
-                    arnisWorld.unloadChunk(cx, cz, false); // drop the void copy without saving
+                    arnisWorld.unloadChunk(cx, cz, false); // drop void copy; reloads from disk lazily
                 }
-                arnisWorld.loadChunk(cx, cz);            // read the baked data from disk
-                arnisWorld.unloadChunkRequest(cx, cz);    // let it unload again if unused
             }
         }
     }

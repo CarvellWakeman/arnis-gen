@@ -4,6 +4,10 @@ import org.bukkit.plugin.IllegalPluginAccessException;
 import org.bukkit.plugin.Plugin;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -34,6 +38,9 @@ public final class BakeService {
     private final ExecutorService pool;
     private final Set<Long> baked = ConcurrentHashMap.newKeySet();
     private final Set<Long> inFlight = ConcurrentHashMap.newKeySet();
+    // Callbacks waiting on each in-flight region. Only touched on the main thread
+    // (submit and the completion callback both run there), so no lock is needed.
+    private final Map<Long, List<Consumer<Boolean>>> waiters = new HashMap<>();
     private final AtomicLong completed = new AtomicLong();
     private final AtomicLong failed = new AtomicLong();
 
@@ -90,15 +97,33 @@ public final class BakeService {
     }
 
     /**
-     * Submit region {@code (rx, rz)} for baking unless it is already baked or in
-     * flight. {@code onDone} (may be null) runs on the main thread after the bake
-     * completes, receiving whether it succeeded.
+     * Submit region {@code (rx, rz)} for baking. {@code onDone} (may be null) runs
+     * on the main thread when the region is ready, receiving whether it succeeded.
+     *
+     * <p>De-duplicated: if the region is already baked the callback fires
+     * immediately; if a bake is already in flight the callback is queued to run
+     * when that bake finishes (so {@code /arnis goto} can await an in-progress
+     * bake instead of dropping its teleport). Must be called on the main thread.
      */
     public void submit(File worldDir, int rx, int rz, Consumer<Boolean> onDone) {
         long k = key(rx, rz);
-        if (baked.contains(k) || !inFlight.add(k)) {
+
+        // Already baked: notify now (we're on the main thread).
+        if (baked.contains(k)) {
+            if (onDone != null) {
+                onDone.accept(true);
+            }
             return;
         }
+
+        // Queue the callback; the first caller starts the bake, later callers wait.
+        if (onDone != null) {
+            waiters.computeIfAbsent(k, key -> new ArrayList<>()).add(onDone);
+        }
+        if (!inFlight.add(k)) {
+            return; // a bake is already running for this region
+        }
+
         pool.submit(() -> {
             RegionBaker.Result res = baker.bake(worldDir, rx, rz);
             runOnMain(() -> {
@@ -109,8 +134,11 @@ public final class BakeService {
                 } else {
                     failed.incrementAndGet();
                 }
-                if (onDone != null) {
-                    onDone.accept(res.ok);
+                List<Consumer<Boolean>> callbacks = waiters.remove(k);
+                if (callbacks != null) {
+                    for (Consumer<Boolean> cb : callbacks) {
+                        cb.accept(res.ok);
+                    }
                 }
             });
         });

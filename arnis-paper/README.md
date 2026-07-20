@@ -33,9 +33,14 @@ The plugin jar lands in `build/libs/arnis-paper-0.1.0.jar`.
 
 ## Commands
 
-- `/arnis status` — show config and how many regions are baked.
+- `/arnis status` — show config and bake-pool stats.
 - `/arnis prewarm [radius]` — bake the regions within `radius` (in regions, default 1)
   around you (or world spawn), in the background.
+- `/arnis goto <lat> <lng>` — teleport to the in-game location of a real-world
+  coordinate (accepts `lat,lng` or `lat lng`), baking that region first if needed.
+  From the console it reports the mapped Minecraft coordinates instead of teleporting.
+- `/arnis reload [radius]` — reload baked region chunks around you from disk without a
+  restart (e.g. after a `prewarm`).
 
 ## Known Phase 1 limitations
 
