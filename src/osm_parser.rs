@@ -451,6 +451,29 @@ pub fn parse_osm_data(
     OutlineSuppression,
     PartGroups,
 ) {
+    parse_osm_data_with_origin(osm_data, bbox, scale, debug, projection, None)
+}
+
+/// Like [`parse_osm_data`], but accepts an explicit fixed Web Mercator origin.
+///
+/// When `web_mercator_origin` is `Some((lat, lon))` and the projection is
+/// `WebMercator`, that origin is used instead of the `bbox` center. This is what
+/// lets region bakes share one global coordinate frame so they line up
+/// seamlessly. `None` reproduces the original behavior exactly (origin = bbox
+/// center), so existing callers are unaffected.
+pub fn parse_osm_data_with_origin(
+    osm_data: OsmData,
+    bbox: LLBBox,
+    scale: f64,
+    debug: bool,
+    projection: crate::projection::ProjectionKind,
+    web_mercator_origin: Option<(f64, f64)>,
+) -> (
+    Vec<ProcessedElement>,
+    XZBBox,
+    OutlineSuppression,
+    PartGroups,
+) {
     println!("{} Parsing data...", "[2/7]".bold());
     println!("Bounding box: {bbox:?}");
 
@@ -459,10 +482,13 @@ pub fn parse_osm_data(
 
     let (coord_transformer, xzbbox) = match projection {
         crate::projection::ProjectionKind::WebMercator => {
-            let origin_lat = (bbox.min().lat() + bbox.max().lat()) / 2.0;
-            let origin_lon = (bbox.min().lng() + bbox.max().lng()) / 2.0;
-            let proj = crate::projection::WebMercatorProjection::new(origin_lat, origin_lon, scale);
-            CoordTransformer::with_projection(&bbox, scale, &proj)
+            let (origin_lat, origin_lon) = web_mercator_origin.unwrap_or_else(|| {
+                (
+                    (bbox.min().lat() + bbox.max().lat()) / 2.0,
+                    (bbox.min().lng() + bbox.max().lng()) / 2.0,
+                )
+            });
+            CoordTransformer::with_web_mercator_origin(&bbox, scale, origin_lat, origin_lon)
         }
         crate::projection::ProjectionKind::Local => {
             CoordTransformer::llbbox_to_xzbbox(&bbox, scale)

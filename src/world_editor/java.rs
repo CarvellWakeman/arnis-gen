@@ -79,12 +79,16 @@ impl<'a> WorldEditor<'a> {
         println!("{} Saving world...", "[7/7]".bold());
         emit_gui_progress_update(90.0, "Saving world...");
 
-        // Save metadata with error handling
-        if let Err(e) = self.save_metadata() {
-            eprintln!("Failed to save world metadata: {}", e);
-            #[cfg(feature = "gui")]
-            send_log(LogLevel::Warning, "Failed to save world metadata.");
-            // Continue with world saving even if metadata fails
+        // Region-bake mode writes a single region into an existing world and owns
+        // no world-level metadata, so skip the metadata file entirely.
+        if self.bake_target_region.is_none() {
+            // Save metadata with error handling
+            if let Err(e) = self.save_metadata() {
+                eprintln!("Failed to save world metadata: {}", e);
+                #[cfg(feature = "gui")]
+                send_log(LogLevel::Warning, "Failed to save world metadata.");
+                // Continue with world saving even if metadata fails
+            }
         }
 
         if self.world.regions.is_empty() {
@@ -93,10 +97,19 @@ impl<'a> WorldEditor<'a> {
 
         // Compute region bounds from original bbox to skip halo regions.
         // A region at (rx, rz) covers blocks [rx*512 .. rx*512+511] × [rz*512 .. rz*512+511].
-        let min_region_x = self.xzbbox.min_x().div_euclid(512);
-        let max_region_x = self.xzbbox.max_x().div_euclid(512);
-        let min_region_z = self.xzbbox.min_z().div_euclid(512);
-        let max_region_z = self.xzbbox.max_z().div_euclid(512);
+        // In bake mode, clamp the writable window to the single target region so
+        // the haloed context area is rendered but never committed.
+        let (min_region_x, max_region_x, min_region_z, max_region_z) =
+            if let Some((trx, trz)) = self.bake_target_region {
+                (trx, trx, trz, trz)
+            } else {
+                (
+                    self.xzbbox.min_x().div_euclid(512),
+                    self.xzbbox.max_x().div_euclid(512),
+                    self.xzbbox.min_z().div_euclid(512),
+                    self.xzbbox.max_z().div_euclid(512),
+                )
+            };
 
         let total_regions = self
             .world

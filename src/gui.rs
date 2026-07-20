@@ -1167,12 +1167,13 @@ fn gui_start_generation(
                 spawn_point: mc_spawn_point,
                 luanti_game,
                 ground_level,
+                bake_target_region: None,
             };
 
             // Create an Args instance with the chosen bounding box
             // Note: path is used for Java-specific features like spawn point update
             let args: Args = Args {
-                bbox,
+                bbox: Some(bbox),
                 file: None,
                 save_json_file: None,
                 path: Some(if world_format == WorldFormat::JavaAnvil {
@@ -1214,6 +1215,10 @@ fn gui_start_generation(
                 // Frontend refuses previews for rotated worlds, skip the work there.
                 map_preview: world_format != WorldFormat::LuantiWorld
                     && rotation_angle.abs() <= f64::EPSILON,
+                // Region-bake mode is CLI-only; the GUI always does full worlds.
+                bake_region: None,
+                origin: None,
+                bake_margin: 64,
             };
 
             // If skip_osm_objects is true (terrain-only mode), skip fetching and processing OSM data
@@ -1224,13 +1229,13 @@ fn gui_start_generation(
                 // Create empty parsed_elements and xzbbox for terrain-only mode
                 let parsed_elements = Vec::new();
                 let (_coord_transformer, xzbbox) =
-                    CoordTransformer::llbbox_to_xzbbox(&args.bbox, args.scale)
+                    CoordTransformer::llbbox_to_xzbbox(&args.bbox(), args.scale)
                         .map_err(|e| format!("Failed to create coordinate transformer: {}", e))?;
 
                 let _ = data_processing::generate_world_with_options(
                     parsed_elements,
                     xzbbox,
-                    args.bbox,
+                    args.bbox(),
                     ground,
                     &args,
                     generation_options.clone(),
@@ -1253,14 +1258,14 @@ fn gui_start_generation(
             let (fetch_result, overture_elements, ground) = std::thread::scope(|s| {
                 let overture_handle = s.spawn(|| {
                     if args.overture {
-                        overture::fetch_overture_buildings(&args.bbox, args.scale, args.debug)
+                        overture::fetch_overture_buildings(&args.bbox(), args.scale, args.debug)
                     } else {
                         Vec::new()
                     }
                 });
                 let ground_handle = s.spawn(|| ground::generate_ground_data(&args));
                 let fetch_result = retrieve_data::fetch_data_from_overpass(
-                    args.bbox, args.debug, "requests", None,
+                    args.bbox(), args.debug, "requests", None,
                 );
                 (
                     fetch_result,
@@ -1275,7 +1280,7 @@ fn gui_start_generation(
                     let (mut parsed_elements, mut xzbbox, outline_suppression, part_groups) =
                         osm_parser::parse_osm_data(
                             raw_data,
-                            args.bbox,
+                            args.bbox(),
                             args.scale,
                             args.debug,
                             crate::projection::ProjectionKind::Local,
@@ -1328,7 +1333,7 @@ fn gui_start_generation(
                     let _ = data_processing::generate_world_with_options(
                         parsed_elements,
                         xzbbox,
-                        args.bbox,
+                        args.bbox(),
                         ground,
                         &args,
                         generation_options.clone(),

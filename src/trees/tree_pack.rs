@@ -73,8 +73,8 @@ pub fn load(args: &Args, scale: f64, ground_level: i32) -> Option<RegionLibrary>
         return None;
     }
     let sizes = SizeFilter::default();
-    let lat = (args.bbox.min().lat() + args.bbox.max().lat()) / 2.0;
-    let lon = (args.bbox.min().lng() + args.bbox.max().lng()) / 2.0;
+    let lat = (args.bbox().min().lat() + args.bbox().max().lat()) / 2.0;
+    let lon = (args.bbox().min().lng() + args.bbox().max().lng()) / 2.0;
     let realm = realm_for_latlon(lat, lon);
     let source = TreePackSource::embedded(realm);
     // No palms outside the subtropics (the wide ena realm also spans the Caribbean).

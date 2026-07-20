@@ -35,6 +35,10 @@ pub struct GenerationOptions {
     pub spawn_point: Option<(i32, i32)>,
     pub luanti_game: Option<crate::luanti_block_map::LuantiGame>,
     pub ground_level: i32,
+    /// Region-bake mode (server terrain generator): when `Some((rx, rz))`, write
+    /// only that region's `.mca` and skip all per-world artifacts (branding, map
+    /// item, decals, metadata, level.dat settings, spawn). `None` = full world.
+    pub bake_target_region: Option<(i32, i32)>,
 }
 
 /// Shoelace area of a way's projected ring, in blocks squared.
@@ -500,11 +504,19 @@ pub fn generate_world_with_options(
             args.disable_height_limit,
         )
     };
+    // Region-bake mode (server terrain generator): write only the target region
+    // and skip every per-world artifact (branding/map item/decals/metadata/
+    // level.dat settings/spawn), since it writes into a world the plugin owns.
+    let bake_mode = options.bake_target_region.is_some();
+    if let Some(region) = options.bake_target_region {
+        editor.set_bake_target_region(region);
+    }
+
     editor.set_bake_lighting(args.bake_lighting);
     editor.set_place_schematics(args.use_3d);
     editor.set_game_settings(args.gamemode, args.world_time);
-    editor.set_start_with_map(args.map_item);
-    editor.set_map_decals(world_format == WorldFormat::JavaAnvil);
+    editor.set_start_with_map(args.map_item && !bake_mode);
+    editor.set_map_decals(world_format == WorldFormat::JavaAnvil && !bake_mode);
     editor.set_projection_info(&args.projection.to_string(), args.scale);
 
     // Map preview accumulator, fed as regions are saved/flushed (Java/Bedrock).
@@ -512,10 +524,11 @@ pub fn generate_world_with_options(
     // The map item consumes the same accumulator, so either feature enables it.
     // Without the PNG the map item only needs 128px, so a small frame suffices
     // (512 = 4x supersampling) instead of the full-resolution preview buffer.
-    let wants_map_item = args.map_item && world_format == WorldFormat::JavaAnvil;
-    // Branding map ships on every Java world.
-    let place_branding = world_format == WorldFormat::JavaAnvil;
-    let wants_png = args.map_preview && world_format != WorldFormat::LuantiWorld;
+    let wants_map_item = args.map_item && world_format == WorldFormat::JavaAnvil && !bake_mode;
+    // Branding map ships on every Java world (but not on a single baked region).
+    let place_branding = world_format == WorldFormat::JavaAnvil && !bake_mode;
+    let wants_png =
+        args.map_preview && world_format != WorldFormat::LuantiWorld && !bake_mode;
     let preview = (wants_png || wants_map_item).then(|| {
         Arc::new(if wants_png {
             PreviewAccumulator::new(&xzbbox)
@@ -659,8 +672,11 @@ pub fn generate_world_with_options(
         // Stream-to-disk: flush+evict each region once its owner + 8 neighbour tiles merge,
         // auto-enabled when the resident world would crowd available RAM. Java only; 3D models
         // are kept via region deferral.
-        eviction_active =
-            matches!(world_format, WorldFormat::JavaAnvil) && should_stream_to_disk(tiles.len());
+        // Never evict in bake mode: eviction writes region files directly,
+        // bypassing the single-region save filter. Baked areas are tiny anyway.
+        eviction_active = matches!(world_format, WorldFormat::JavaAnvil)
+            && !bake_mode
+            && should_stream_to_disk(tiles.len());
 
         // Regions any 3D placement may write to: kept resident (not evicted in-loop)
         // so the post-merge placement pass lands in RAM, then flushed at finalize.
@@ -1184,10 +1200,10 @@ pub fn generate_world_with_options(
         let png_path = map_preview::preview_output_path(&output_path, world_format);
         let result = map_preview::PreviewResult {
             png_path: png_path.clone(),
-            min_lat: args.bbox.min().lat(),
-            max_lat: args.bbox.max().lat(),
-            min_lon: args.bbox.min().lng(),
-            max_lon: args.bbox.max().lng(),
+            min_lat: args.bbox().min().lat(),
+            max_lat: args.bbox().max().lat(),
+            min_lon: args.bbox().min().lng(),
+            max_lon: args.bbox().max().lng(),
             min_mc_x: xzbbox.min_x(),
             max_mc_x: xzbbox.max_x(),
             min_mc_z: xzbbox.min_z(),
@@ -1223,7 +1239,8 @@ pub fn generate_world_with_options(
 
     emit_gui_progress_update(99.0, "Finalizing world...");
 
-    if world_format == WorldFormat::JavaAnvil {
+    // Bake mode writes into a world the plugin owns; don't touch its level.dat.
+    if world_format == WorldFormat::JavaAnvil && !bake_mode {
         if let Err(e) = crate::world_utils::apply_java_world_settings(
             &output_path,
             args.gamemode,
@@ -1235,16 +1252,16 @@ pub fn generate_world_with_options(
 
     // Update player spawn Y coordinate based on terrain height after generation
     #[cfg(feature = "gui")]
-    if world_format == WorldFormat::JavaAnvil {
+    if world_format == WorldFormat::JavaAnvil && !bake_mode {
         use crate::gui::update_player_spawn_y_after_generation;
         // Reconstruct bbox string to match the format that GUI originally provided.
         // This ensures LLBBox::from_str() can parse it correctly.
         let bbox_string = format!(
             "{},{},{},{}",
-            args.bbox.min().lat(),
-            args.bbox.min().lng(),
-            args.bbox.max().lat(),
-            args.bbox.max().lng()
+            args.bbox().min().lat(),
+            args.bbox().min().lng(),
+            args.bbox().max().lat(),
+            args.bbox().max().lng()
         );
 
         // Always update spawn Y since we now always set a spawn point (user-selected or default).
