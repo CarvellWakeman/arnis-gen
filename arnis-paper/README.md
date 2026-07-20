@@ -1,10 +1,14 @@
 # arnis-paper (Phase 1)
 
-A minimal [Paper](https://papermc.io/) plugin that turns the `arnis` region-bake
-backend into an on-demand server terrain generator. It bootstraps a **void world**
-and bakes `arnis` region files into it, so real-world terrain streams in as chunks
-load. This is Phase 1 — manual/prewarm baking; automatic player-driven streaming is
-Phase 2 (see [`../worldgen-docs/roadmap.md`](../worldgen-docs/roadmap.md)).
+A [Paper](https://papermc.io/) plugin that turns the `arnis` region-bake backend
+into an on-demand server terrain generator. It bootstraps a **void world** and
+streams `arnis`-baked region files into it ahead of players as they explore.
+
+> **Setting up a server to play on? See [SERVER_SETUP.md](./SERVER_SETUP.md)** —
+> a step-by-step install/config/play guide. The rest of this file is a developer
+> quick-reference.
+
+See [`../worldgen-docs/roadmap.md`](../worldgen-docs/roadmap.md) for design and status.
 
 ## Requirements
 

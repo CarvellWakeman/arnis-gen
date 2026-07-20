@@ -71,12 +71,10 @@ just the scannable checklist of deliverables.
   start and completion of each chunk/region bake; log any generation errors
   (subprocess failures, malformed JSON, projection/config errors, etc.) so a server
   owner can diagnose issues from the console alone.
-- [ ] **README for server owners** — document how to install and run the plugin:
-  setting the server to use this world generator, required environment
-  variables/API keys (e.g. self-hosted Overpass/elevation endpoints), and other
-  gotchas or vanilla server settings that need changing (view-distance, world
-  height/datapacks, etc.). _(a basic build/install README exists in `arnis-paper/`;
-  the full server-owner guide is still pending)_
+- [x] **README for server owners** — `arnis-paper/SERVER_SETUP.md`: step-by-step
+  build/install/configure/play guide covering the absolute-path arnis binary, origin
+  and streaming config, entering the world via `/arnis goto`, data-source/caching
+  notes, view-distance vs prefetch-radius tuning, and troubleshooting.
 - [x] **End-to-end smoke test** (`e2e/smoke_test.ps1`) — boots a real headless Paper
   server with the plugin + real `arnis`, asserts the void world is created and the
   spawn region bakes (`r.0.0.mca`), then stops cleanly. Re-runnable; caches downloads.
