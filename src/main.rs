@@ -29,6 +29,7 @@ mod map_renderer;
 mod map_transformation;
 mod models_3d;
 mod ore_generation;
+mod osm_cache;
 mod osm_parser;
 mod overture;
 #[cfg(feature = "gui")]

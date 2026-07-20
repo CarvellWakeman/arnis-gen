@@ -121,33 +121,13 @@ pub fn fetch_data_from_file(file: &str) -> Result<OsmData, Box<dyn std::error::E
     Ok(data)
 }
 
-/// Main function to fetch data
-pub fn fetch_data_from_overpass(
-    bbox: LLBBox,
-    debug: bool,
-    download_method: &str,
-    save_file: Option<&str>,
-) -> Result<OsmData, Box<dyn std::error::Error>> {
-    println!("{} Fetching data...", "[1/7]".bold());
-    emit_gui_progress_update(1.0, "Downloading data...");
-
-    // List of Overpass API servers
-    let arnis_api_server = "https://api.arnismc.com/overpass/api/interpreter";
-    let api_servers: Vec<&str> = vec![
-        "https://overpass-api.de/api/interpreter",
-        "https://lz4.overpass-api.de/api/interpreter",
-        "https://z.overpass-api.de/api/interpreter",
-    ];
-    let fallback_api_servers: Vec<&str> = vec![
-        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-        "https://overpass.private.coffee/api/interpreter",
-    ];
-
-    // Generate Overpass API query for bounding box.
-    // Ocean/coastal elements are excluded because ESA WorldCover satellite data
-    // handles ocean detection more reliably at 10m resolution (LC_WATER class).
-    // Inland water (lakes, rivers, ponds) is still fetched from OSM.
-    let query: String = format!(
+/// Builds the Overpass QL query for a bounding box.
+///
+/// Ocean/coastal elements are excluded because ESA WorldCover satellite data
+/// handles ocean detection more reliably at 10m resolution (LC_WATER class).
+/// Inland water (lakes, rivers, ponds) is still fetched from OSM.
+fn build_overpass_query(bbox: LLBBox) -> String {
+    format!(
         r#"[out:json][timeout:360][bbox:{},{},{},{}];
     (
         nwr["building"];
@@ -191,7 +171,29 @@ pub fn fetch_data_from_overpass(
         bbox.min().lng(),
         bbox.max().lat(),
         bbox.max().lng(),
-    );
+    )
+}
+
+/// Fetches the raw Overpass JSON response (as text) for a bounding box, trying
+/// the arnis proxy, official, and fallback servers in turn. Shared by the
+/// single-shot fetch and the tiled OSM cache.
+pub(crate) fn fetch_overpass_raw(
+    bbox: LLBBox,
+    download_method: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let query = build_overpass_query(bbox);
+
+    // List of Overpass API servers
+    let arnis_api_server = "https://api.arnismc.com/overpass/api/interpreter";
+    let api_servers: Vec<&str> = vec![
+        "https://overpass-api.de/api/interpreter",
+        "https://lz4.overpass-api.de/api/interpreter",
+        "https://z.overpass-api.de/api/interpreter",
+    ];
+    let fallback_api_servers: Vec<&str> = vec![
+        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter",
+    ];
 
     {
         // Fetch data from Overpass API.
@@ -300,16 +302,33 @@ pub fn fetch_data_from_overpass(
             return Err(last_error.unwrap_or_else(|| "All servers failed".into()));
         };
 
-        if let Some(save_file) = save_file {
-            let mut file: File = File::create(save_file)?;
-            file.write_all(response.as_bytes())?;
-            println!("API response saved to: {save_file}");
-        }
+        Ok(response)
+    }
+}
 
-        let mut deserializer =
-            serde_json::Deserializer::from_reader(Cursor::new(response.as_bytes()));
-        let data: OsmData = OsmData::deserialize(&mut deserializer)?;
+/// Main function to fetch data
+pub fn fetch_data_from_overpass(
+    bbox: LLBBox,
+    debug: bool,
+    download_method: &str,
+    save_file: Option<&str>,
+) -> Result<OsmData, Box<dyn std::error::Error>> {
+    println!("{} Fetching data...", "[1/7]".bold());
+    emit_gui_progress_update(1.0, "Downloading data...");
 
+    let response = fetch_overpass_raw(bbox, download_method)?;
+
+    if let Some(save_file) = save_file {
+        let mut file: File = File::create(save_file)?;
+        file.write_all(response.as_bytes())?;
+        println!("API response saved to: {save_file}");
+    }
+
+    let mut deserializer =
+        serde_json::Deserializer::from_reader(Cursor::new(response.as_bytes()));
+    let data: OsmData = OsmData::deserialize(&mut deserializer)?;
+
+    {
         if data.is_empty() {
             // Distinguish a real server error (memory/runtime) from a benign
             // "this bbox has no mapped objects" response. The former still

@@ -114,6 +114,36 @@ impl OsmData {
             remark: None,
         }
     }
+
+    /// Merge multiple datasets, keeping the first element seen for each
+    /// `(type, id)` pair.
+    ///
+    /// Used by the tiled OSM cache: a region bake fetches several geographic
+    /// tiles that each return the elements overlapping them (a way spanning a
+    /// tile boundary appears in every tile it touches, with its full node list),
+    /// so de-duplicating by `(type, id)` reconstructs the complete dataset.
+    pub fn merged(datasets: impl IntoIterator<Item = OsmData>) -> OsmData {
+        let mut seen: HashSet<(u8, u64)> = HashSet::new();
+        let mut elements: Vec<OsmElement> = Vec::new();
+        let mut remark: Option<String> = None;
+        for data in datasets {
+            if remark.is_none() {
+                remark = data.remark;
+            }
+            for element in data.elements {
+                let type_code = match element.r#type.as_str() {
+                    "node" => 0u8,
+                    "way" => 1,
+                    "relation" => 2,
+                    _ => 3,
+                };
+                if seen.insert((type_code, element.id)) {
+                    elements.push(element);
+                }
+            }
+        }
+        OsmData { elements, remark }
+    }
 }
 
 struct SplitOsmData {

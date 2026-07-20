@@ -28,9 +28,11 @@ just the scannable checklist of deliverables.
   independent bakes stay aligned.
 - [x] **Machine-readable output** — emit JSON to stdout (`ARNIS_BAKE_RESULT`) for the
   plugin to parse.
-- [ ] **Global data caching** — cache fetched OSM and land-cover tiles on disk
-  (alongside existing elevation caching) so adjacent region bakes reuse data; consider
-  batching several adjacent regions per invocation to amortize preprocessing/network.
+- [x] **Global data caching** — land cover and elevation were already tile-cached;
+  added a tiled on-disk OSM cache (`src/osm_cache.rs`, `arnis-osm-cache`) that fetches
+  whole geographic grid tiles once and merges covering tiles per region, so adjacent
+  region bakes reuse Overpass fetches. _(multi-region-per-invocation batching still
+  optional/pending.)_
 - [ ] **Height/lighting config** — match baked Y range to the server world
   (`--ground-level` / tall-world datapack); support `--bake-lighting`; verify chunk
   NBT `Status = minecraft:full` so baked chunks are accepted without regeneration.

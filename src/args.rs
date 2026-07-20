@@ -616,8 +616,11 @@ mod tests {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmp_path = tmpdir.path().to_str().unwrap();
 
+        // With no bbox, parsing now succeeds (bbox is optional so --bake-region
+        // can derive its own) but validation rejects the missing bbox.
         let cmd = ["arnis"];
-        assert!(Args::try_parse_from(cmd.iter()).is_err());
+        let args = Args::try_parse_from(cmd.iter()).unwrap();
+        assert!(validate_args(&args).is_err());
 
         let cmd = ["arnis", "--output-dir", tmp_path, "--bbox", "1,2,3,4"];
         let args = Args::try_parse_from(cmd.iter()).unwrap();
@@ -628,8 +631,10 @@ mod tests {
         let args = Args::try_parse_from(cmd.iter()).unwrap();
         assert!(validate_args(&args).is_ok());
 
+        // --file without a bbox: parses, but validation rejects the missing bbox.
         let cmd = ["arnis", "--output-dir", tmp_path, "--file", ""];
-        assert!(Args::try_parse_from(cmd.iter()).is_err());
+        let args = Args::try_parse_from(cmd.iter()).unwrap();
+        assert!(validate_args(&args).is_err());
 
         // The --gui flag isn't used here, ugh. TODO clean up main.rs and its argparse usage.
         // let cmd = ["arnis", "--gui"];

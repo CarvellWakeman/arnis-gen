@@ -71,11 +71,11 @@ pub fn run(mut args: Args) {
     } else {
         let fetched = match &args.file {
             Some(file) => crate::retrieve_data::fetch_data_from_file(file),
-            None => crate::retrieve_data::fetch_data_from_overpass(
+            // Tiled disk cache so adjacent region bakes reuse Overpass fetches.
+            None => crate::osm_cache::fetch_osm_tiled(
                 fetch_bbox,
                 args.debug,
                 args.downloader.as_str(),
-                None,
             ),
         };
         match fetched {
