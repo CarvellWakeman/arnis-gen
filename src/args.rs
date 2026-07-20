@@ -49,7 +49,7 @@ pub struct Args {
     pub projection: crate::projection::ProjectionKind,
 
     /// Ground level to use in the Minecraft world
-    #[arg(long, default_value_t = -62)]
+    #[arg(long, default_value_t = -62, allow_hyphen_values = true)]
     pub ground_level: i32,
 
     /// What to generate, mirroring the GUI's generation mode dropdown:

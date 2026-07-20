@@ -1,0 +1,34 @@
+# Arnis on-demand terrain generator configuration.
+
+# The Bukkit world arnis manages. Created on enable if it does not exist, using
+# the void generator (baked regions load from disk; everything else is void).
+world: arnis
+
+# Real-world anchor: this latitude/longitude maps to Minecraft (0,0). Shared by
+# every region bake so independently generated regions line up seamlessly.
+# Changing this after regions exist invalidates them.
+origin:
+  lat: 51.515
+  lng: -0.115
+
+# Blocks per meter.
+scale: 1.0
+
+# Extra blocks fetched around each region for cross-boundary context
+# (roads/rivers/relations spanning the edge). Rendered but not committed.
+bake-margin: 64
+
+# Ground-level offset passed to arnis (matches arnis's --ground-level).
+ground-level: -62
+
+# Path to the arnis executable (the Rust binary). Use an absolute path unless it
+# is on the server process's PATH.
+arnis-binary: "arnis"
+
+# Bake the spawn region when the plugin first enables so spawn has real terrain.
+bake-spawn-on-enable: true
+
+# Spawn point in Minecraft X/Z. Y is derived from the baked terrain.
+spawn:
+  x: 8
+  z: 8

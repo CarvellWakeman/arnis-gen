@@ -1,0 +1,15 @@
+name: ArnisGen
+version: '${version}'
+main: com.arnis.paper.ArnisPlugin
+api-version: '1.21'
+authors: [arnis]
+description: On-demand real-world terrain generator backed by the arnis region baker.
+commands:
+  arnis:
+    description: Arnis terrain generator controls.
+    usage: /arnis <status|prewarm [radius]>
+    permission: arnis.admin
+permissions:
+  arnis.admin:
+    description: Manage the arnis generator.
+    default: op

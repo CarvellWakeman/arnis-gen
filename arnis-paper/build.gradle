@@ -1,0 +1,32 @@
+plugins {
+    id 'java'
+}
+
+group = 'com.arnis'
+version = '0.1.0'
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://repo.papermc.io/repository/maven-public/' }
+}
+
+dependencies {
+    // Provided by the server at runtime; only needed to compile against.
+    compileOnly 'io.papermc.paper:paper-api:1.21.1-R0.1-SNAPSHOT'
+}
+
+// Paper 1.21.x runs on Java 21. Compile to that bytecode level regardless of the
+// JDK running Gradle (JDK 21+ required to build).
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
+// Substitute the project version into plugin.yml at build time.
+processResources {
+    def props = [version: version]
+    inputs.properties(props)
+    filesMatching('plugin.yml') {
+        expand(props)
+    }
+}
