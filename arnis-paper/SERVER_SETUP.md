@@ -113,15 +113,19 @@ Set `origin` to wherever you want your world centered.
 
 ## Step 5 — start, and enter your world
 
-1. Start the server. On enable you'll see in the console:
+1. Start the server. On the **first** start the plugin pre-bakes the spawn region
+   *before* the world loads, so **startup pauses ~30–60 s** (network fetch + render)
+   while you see:
    ```
+   [ArnisGen] Pre-baking spawn region into 'arnis' before world load (first start; this can take ~30-60s)...
+   [ArnisGen] Spawn region pre-baked.
+   ...
    [ArnisGen] Arnis world 'arnis' ready.
-   [ArnisGen] Baking region 0,0...
+   [ArnisGen] Spawn set to 8,-3,8
    [ArnisGen] Streaming enabled: prefetch radius 2 region(s), 2 worker(s)...
-   [ArnisGen] Baked region 0,0 in NNNNN ms
-   [ArnisGen] Spawn region baked.
    ```
-   The first bake takes ~30–60 s (network fetch + render).
+   Pre-baking means spawn comes up as real terrain (not void) with no restart. Later
+   starts skip it (the region is already on disk) and boot normally.
 2. Join the server. You spawn in the normal `world` — the generated terrain lives in
    the separate `arnis` world.
 3. **Enter the generated world with `/arnis goto`:**
@@ -154,10 +158,9 @@ world instead, make it the server's primary world:
    `Preparing level "arnis"` followed by `[ArnisGen] Arnis world 'arnis' ready.`
    and no "Could not set generator" error.
 
-**Spawn:** on enable the plugin bakes the spawn region and moves spawn onto the
-baked surface. The first bake takes ~30–60 s — watch for `[ArnisGen] Spawn region
-baked.` in the console. If you join before it finishes you'll briefly be in the void;
-just reconnect once it's baked.
+**Spawn:** the plugin pre-bakes the spawn region before the world loads (first start
+only), so spawn comes up as real terrain with no restart. This pauses the first
+startup ~30–60 s — watch for `[ArnisGen] Spawn region pre-baked.`
 
 ---
 

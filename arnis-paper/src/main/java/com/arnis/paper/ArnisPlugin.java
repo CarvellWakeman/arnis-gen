@@ -30,9 +30,43 @@ public final class ArnisPlugin extends JavaPlugin {
     private World arnisWorld;
 
     @Override
-    public void onEnable() {
+    public void onLoad() {
         saveDefaultConfig();
         config = ArnisConfig.from(getConfig());
+        // Bake the spawn region here, before the server loads its worlds. Then the
+        // server reads real terrain from disk instead of generating void at spawn,
+        // and arnis never overwrites a region file the server already has open (which
+        // it logs as a "corrupt regionfile" and has to recover from).
+        if (config.bakeSpawnOnEnable && arnisBinaryConfigured()) {
+            preBakeSpawnRegion();
+        }
+    }
+
+    /** Synchronously bake the spawn region into the world folder, before world load. */
+    private void preBakeSpawnRegion() {
+        int rx = config.spawnX >> 9;
+        int rz = config.spawnZ >> 9;
+        File worldFolder = new File(getServer().getWorldContainer(), config.worldName);
+        File regionFile = new File(new File(worldFolder, "region"), "r." + rx + "." + rz + ".mca");
+        if (regionFile.isFile()) {
+            return; // baked in a previous run
+        }
+        getLogger().info("Pre-baking spawn region into '" + config.worldName
+                + "' before world load (first start; this can take ~30-60s)...");
+        RegionBaker.Result res = new RegionBaker(this, config).bake(worldFolder, rx, rz);
+        if (res.ok) {
+            getLogger().info("Spawn region pre-baked.");
+        } else {
+            getLogger().warning("Spawn region pre-bake failed; spawn may be void until it streams in.");
+        }
+    }
+
+    @Override
+    public void onEnable() {
+        if (config == null) { // normally set in onLoad
+            saveDefaultConfig();
+            config = ArnisConfig.from(getConfig());
+        }
         baker = new RegionBaker(this, config);
         bakeService = new BakeService(this, baker, config.workers);
 
