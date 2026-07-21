@@ -2,6 +2,10 @@ name: ArnisGen
 version: '${version}'
 main: com.arnis.paper.ArnisPlugin
 api-version: '1.21'
+# Enable before worlds load so the void generator is available if a server makes
+# the arnis world its primary world (bukkit.yml + level-name). World creation
+# itself is deferred to after startup (Bukkit forbids it during STARTUP).
+load: STARTUP
 authors: [arnis]
 description: On-demand real-world terrain generator backed by the arnis region baker.
 commands:

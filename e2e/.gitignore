@@ -2,5 +2,6 @@
 .cache/
 run/
 
-# The root .gitignore excludes *.ps1; the e2e harness script is a deliverable.
+# The root .gitignore excludes *.ps1; the e2e harness scripts are deliverables.
 !smoke_test.ps1
+!primary_world_test.ps1

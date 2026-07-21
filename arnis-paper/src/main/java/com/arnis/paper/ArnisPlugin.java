@@ -38,22 +38,36 @@ public final class ArnisPlugin extends JavaPlugin {
         getLogger().info("Enabling: origin " + config.originLat + "," + config.originLng
                 + " -> MC (0,0), scale " + config.scale + " blocks/m, arnis '" + config.arnisBinary + "'");
 
-        arnisWorld = new WorldCreator(config.worldName)
-                .generator(new VoidChunkGenerator(config.spawnX, config.spawnZ))
-                .createWorld();
-        if (arnisWorld == null) {
-            getLogger().severe("Failed to create/load arnis world '" + config.worldName + "'.");
-            return;
-        }
-        getLogger().info("Arnis world '" + config.worldName + "' ready.");
-        bakeService.initFromDisk(arnisWorld.getWorldFolder());
-
         PluginCommand command = getCommand("arnis");
         if (command != null) {
             command.setExecutor(new ArnisCommand(this));
         } else {
             getLogger().severe("Command 'arnis' is not defined in plugin.yml.");
         }
+
+        // World setup runs after the server has loaded its worlds. Bukkit forbids
+        // creating worlds during STARTUP, and if arnis is the primary world it is
+        // loaded by the server (via getDefaultWorldGenerator); either way we do the
+        // rest on the first tick, when the world is available or safe to create.
+        getServer().getScheduler().runTask(this, this::setUpWorld);
+    }
+
+    /** Acquire (or create) the arnis world, then start baking and streaming. */
+    private void setUpWorld() {
+        // If arnis is the server's primary/already-loaded world, use it; otherwise
+        // create it now (post-startup, so createWorld is allowed).
+        arnisWorld = getServer().getWorld(config.worldName);
+        if (arnisWorld == null) {
+            arnisWorld = new WorldCreator(config.worldName)
+                    .generator(new VoidChunkGenerator(config.spawnX, config.spawnZ))
+                    .createWorld();
+        }
+        if (arnisWorld == null) {
+            getLogger().severe("Failed to create/load arnis world '" + config.worldName + "'.");
+            return;
+        }
+        getLogger().info("Arnis world '" + config.worldName + "' ready.");
+        bakeService.initFromDisk(arnisWorld.getWorldFolder());
 
         // If the arnis binary is a path that doesn't exist, don't even try to bake:
         // warn once with an actionable message and leave the world void until it's set.

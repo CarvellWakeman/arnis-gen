@@ -135,6 +135,33 @@ Set `origin` to wherever you want your world centered.
 
 ---
 
+## Optional: make `arnis` the world players spawn into
+
+By default the generated world is **separate** from your normal overworld, and you
+enter it with `/arnis goto`. To have players spawn **directly** in the generated
+world instead, make it the server's primary world:
+
+1. In `server.properties`, set `level-name=arnis` — it must match `world:` in the
+   plugin config.
+2. In `bukkit.yml`, register the plugin's generator for it:
+   ```yaml
+   worlds:
+     arnis:
+       generator: ArnisGen
+   ```
+3. Restart. The plugin loads early enough (`load: STARTUP`) to provide the void
+   generator, so the main world comes up as arnis terrain — you'll see
+   `Preparing level "arnis"` followed by `[ArnisGen] Arnis world 'arnis' ready.`
+   and no "Could not set generator" error.
+
+**First-boot spawn:** the spawn region is baked while its chunks are already loaded,
+so on the very first boot spawn may be in the void. **Restart once** after you see
+`Spawn region baked.` in the console — on the next boot spawn loads the baked terrain
+and lands on the surface. This only affects the spawn region; everywhere else streams
+in cleanly, and `/arnis goto` works regardless.
+
+---
+
 ## Commands
 
 All require the `arnis.admin` permission (op by default).

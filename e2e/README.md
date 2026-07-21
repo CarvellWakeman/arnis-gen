@@ -33,6 +33,17 @@ Options:
 Exit code `0` = pass, `1` = fail. On failure the run dir is kept and the last log
 lines are printed.
 
+### Primary-world variant
+
+`primary_world_test.ps1` boots a server with `level-name=arnis` + a `bukkit.yml`
+generator entry and asserts arnis comes up as the **primary** world with no
+"Could not set generator" error. Run `smoke_test.ps1` once first (it downloads the
+Paper jar and builds the plugin jar this test reuses), then:
+
+```powershell
+pwsh -File e2e/primary_world_test.ps1
+```
+
 ## Requirements
 
 - **JDK 21+** on `JAVA_HOME` (used to build the plugin and run the server).
