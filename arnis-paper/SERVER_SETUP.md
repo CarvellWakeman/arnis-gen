@@ -310,8 +310,9 @@ the barrier prevents.
 - **Enter new areas with `/arnis goto`.** Streaming bakes *ahead* of players; `goto` and
   spawn bake the whole area your view will reach on arrival — not just the one region you
   land in — because a player dropped next to an unbaked neighbour makes the server
-  generate it as void. If you jump into a totally fresh area another way (a plain
-  `/tp` into unbaked terrain), it may be void until a bake catches up.
+  generate it as void. Teleports are exempt from the barrier (it would otherwise block
+  `goto` itself), so a plain `/tp` into fresh terrain is the one routine way to still
+  land in void.
 - **Players get held at the frontier when they outrun generation.** Flying is much
   faster than baking (a sprint-flying player crosses a region in ~23 s; a cold bake
   takes 30–60 s), so `barrier: true` stops them about a view distance short of unbaked
@@ -324,12 +325,13 @@ the barrier prevents.
   automatically once the player moves on (`repair-unbaked`), tracked via the
   `<world>/arnis-baked/` index — but a restart may still be needed for the repaired
   terrain to show.
-- **A void hole that never fills in needs `/arnis rebake`.** Once the server generates a
-  region as void it writes that void to `r.X.Z.mca`, and from then on the region looks
-  "already baked" — the streaming tracker skips it forever. `/arnis rebake [radius]`
-  ignores that and regenerates anyway. Use it for leftover void seams and for terrain
-  baked before an `origin` / `scale` / vertical-datum change. Restart afterwards if the
-  terrain still looks stale (the server can cache a region-file handle).
+- **`/arnis rebake` is for holes the plugin can't know about.** Regions the server
+  generated are now tracked (`<world>/arnis-baked/`) and re-baked on their own. But
+  regions that pre-date that index — any world baked before this version, whose region
+  files were adopted as "baked" on first start — are invisible to it, as is terrain baked
+  before an `origin` / `scale` / vertical-datum change. `/arnis rebake [radius]`
+  regenerates regardless. Restart afterwards if the terrain still looks stale (the server
+  can cache a region-file handle).
 - **Keep `prefetch-radius` ahead of view distance.** With server `view-distance=N`
   chunks, set `prefetch-radius` ≥ `ceil(N × 16 / 512) + 1` so regions are baked before
   the server tries to load them. A modest `view-distance` (4–8) plus `prefetch-radius: 2`
@@ -382,9 +384,17 @@ the barrier prevents.
 
 ## Current limitations (early build)
 
-- Live player-driven streaming and the in-game `goto` teleport are validated by design
-  and by a headless server test, but a hands-on playtest is the real proof — that's what
-  this guide is for.
+- **Teleports other than `/arnis goto` can still outrun generation.** The barrier only
+  governs walking and flying; `/arnis goto` and the spawn pre-bake bake their whole
+  arrival view first, but a plain `/tp`, a portal, or another plugin's warp can drop a
+  player into unbaked terrain. That region is then re-baked automatically, though it may
+  take a restart to show. Prefer `/arnis goto` for jumping to fresh areas.
+- **Repaired regions may need a restart to appear.** The server caches an open handle
+  per region file, so a region it generated itself and then arnis re-baked can keep
+  serving the old contents until a restart, even though the correct terrain is on disk.
 - Regions bake independently, so very long features that cross region boundaries can
   show minor seams. Tuning this is planned.
 - One region can only be baked before a player reaches it, not while they stand on it.
+- Bakes are queued per region and are network-bound, so a fast-moving player (or several
+  going different ways) can build a long queue. The barrier means this shows up as a
+  wait at the frontier rather than as missing terrain.

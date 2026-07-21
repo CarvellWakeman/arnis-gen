@@ -1,4 +1,4 @@
-# arnis-paper (Phase 1)
+# arnis-paper
 
 A [Paper](https://papermc.io/) plugin that turns the `arnis` region-bake backend
 into an on-demand server terrain generator. It bootstraps a **void world** and
@@ -52,11 +52,28 @@ building the engine. Prebuilt bundles of both are attached to each
   From the console it reports the mapped Minecraft coordinates instead of teleporting.
 - `/arnis reload [radius]` — reload baked region chunks around you from disk without a
   restart (e.g. after a `prewarm`).
+- `/arnis rebake [radius]` — force-regenerate the regions around you even if they are
+  already on disk; the escape hatch for terrain the plugin cannot know is stale.
 
-## Known Phase 1 limitations
+## Streaming model
 
-- Baked terrain appears reliably in chunks loaded **fresh**. Reloading a region the
-  server already holds resident is best-effort; a **server restart** always loads
-  baked regions cleanly. Safe live streaming is Phase 2.
-- Baking is synchronous per region on a worker thread and fetches map data over the
-  network, so `prewarm` over a large radius can take a while.
+Three mechanisms keep players on baked terrain, in order of importance:
+
+- **`MovementBarrier`** holds a player when the destination's view footprint reaches
+  unbaked terrain, so the server never generates the region in the first place.
+  Teleports are exempt and `arnis.bypass` opts out.
+- **`PlayerTracker`** bakes ahead along the direction of travel — lookahead scales with
+  measured speed over `streaming.lead-seconds` — plus a ring at `prefetch-radius`.
+- **`BakedIndex`** records which regions arnis produced (`<world>/arnis-baked/`), so a
+  region the *server* generated is not mistaken for a baked one and is re-baked once
+  nothing holds it loaded.
+
+## Known limitations
+
+- Baked terrain appears reliably in chunks loaded **fresh**. A region the server already
+  holds resident is best-effort — it caches an open region-file handle, so an external
+  re-bake of it may not show until a **restart**.
+- Teleports bypass the barrier, so a plain `/tp` into fresh terrain can still land in
+  void; `/arnis goto` bakes its arrival view first.
+- Baking is per region on a worker thread and fetches map data over the network, so a
+  fast player or a wide `prewarm` can build a long queue.
