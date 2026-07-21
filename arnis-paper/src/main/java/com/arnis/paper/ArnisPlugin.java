@@ -202,13 +202,16 @@ public final class ArnisPlugin extends JavaPlugin {
                     + config.intervalTicks + " ticks, repair "
                     + (config.repairUnbaked ? "on (max " + config.maxRepairsPerScan + "/scan)" : "off")
                     + ", lookahead " + (config.leadSeconds > 0 ? config.leadSeconds + "s" : "off")
-                    + ", barrier " + (config.barrier ? "on" : "off") + ".");
+                    + ", barrier " + (config.barrier ? "on" : "off")
+                    + ", safe-teleport " + (config.safeTeleport ? "on" : "off") + ".");
 
-            // The barrier only makes sense alongside streaming: without something
-            // baking the frontier, it would be a wall that never lifts.
-            if (config.barrier) {
+            // Both only make sense alongside streaming: without something baking the
+            // frontier, the barrier would be a wall that never lifts and a deferred
+            // teleport would never arrive.
+            if (config.barrier || config.safeTeleport) {
                 getServer().getPluginManager().registerEvents(
-                        new MovementBarrier(this, arnisWorld, bakeService), this);
+                        new MovementBarrier(this, arnisWorld, bakeService,
+                                config.barrier, config.safeTeleport), this);
             }
         }
     }

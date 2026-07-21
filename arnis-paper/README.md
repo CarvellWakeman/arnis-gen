@@ -60,8 +60,10 @@ building the engine. Prebuilt bundles of both are attached to each
 Three mechanisms keep players on baked terrain, in order of importance:
 
 - **`MovementBarrier`** holds a player when the destination's view footprint reaches
-  unbaked terrain, so the server never generates the region in the first place.
-  Teleports are exempt and `arnis.bypass` opts out.
+  unbaked terrain, so the server never generates the region in the first place. It also
+  defers teleports — cancel, bake the arrival view, re-issue — since a teleport arrives
+  with no lead time and blocking one outright would strand the player. `arnis.bypass`
+  opts out of both.
 - **`PlayerTracker`** bakes ahead along the direction of travel — lookahead scales with
   measured speed over `streaming.lead-seconds` — plus a ring at `prefetch-radius`.
 - **`BakedIndex`** records which regions arnis produced (`<world>/arnis-baked/`), so a
@@ -73,7 +75,5 @@ Three mechanisms keep players on baked terrain, in order of importance:
 - Baked terrain appears reliably in chunks loaded **fresh**. A region the server already
   holds resident is best-effort — it caches an open region-file handle, so an external
   re-bake of it may not show until a **restart**.
-- Teleports bypass the barrier, so a plain `/tp` into fresh terrain can still land in
-  void; `/arnis goto` bakes its arrival view first.
 - Baking is per region on a worker thread and fetches map data over the network, so a
   fast player or a wide `prewarm` can build a long queue.

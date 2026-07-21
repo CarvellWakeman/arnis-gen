@@ -81,6 +81,13 @@ streaming:
   # edge (their view loads terrain before they reach it) and released as soon as the
   # frontier is baked. Grant 'arnis.bypass' to ignore it.
   barrier: true
+  # Defer teleports into unbaked terrain instead of landing a player in void. The
+  # barrier cannot cover teleports — they arrive with no lead time, and blocking one
+  # outright would just strand the player — so the teleport is held, the destination's
+  # arrival view is baked, and then it is re-issued. This is what '/arnis goto' has
+  # always done; this setting extends it to plain /tp, portals and other plugins'
+  # warps. Also skipped for 'arnis.bypass'.
+  safe-teleport: true
   # Seconds of travel to keep baked ahead of a moving player. Prefetch follows the
   # direction of travel, so a sprint-flying player (~22 blocks/s, one region every
   # ~23s) gets several regions of lead while a walking player gets one. Should be at

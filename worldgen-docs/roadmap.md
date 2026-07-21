@@ -69,9 +69,14 @@ just the scannable checklist of deliverables.
   later external bake may not appear until a restart. Blocks a move whose destination
   *view footprint* reaches unbaked terrain (a view distance short of the edge, since the
   view loads terrain before the player arrives) and queues those regions immediately.
-  Teleports are exempt, a player already in unbaked space is never blocked, and
-  `arnis.bypass` (granted to nobody by default, operators included) opts out.
-  _(gap: non-`goto` teleports can still land in unbaked terrain — see Phase 3.)_
+  A player already in unbaked space is never blocked, and `arnis.bypass` (granted to
+  nobody by default, operators included) opts out.
+- [x] **Safe teleports** — a teleport is the case the barrier cannot cover: it arrives
+  with no lead time, and blocking it outright would strand the player. So a teleport
+  whose destination view is unbaked is cancelled, its regions are baked, and it is then
+  re-issued — generalising what `/arnis goto` already did to plain `/tp`, portals and
+  other plugins' warps. Re-issues are flagged so they pass straight through, and a later
+  request supersedes an earlier one rather than both firing.
 - [x] **`ArnisCommand`** — `/arnis status`, `/arnis prewarm [radius]`, `/arnis goto
   <lat> <lng>`, and `/arnis reload [radius]` implemented.
 - [x] **`/arnis goto <lat> <lng>` (real-world navigation)** — teleports a player to the
@@ -126,9 +131,7 @@ just the scannable checklist of deliverables.
   as possible and changing direction — the barrier engaged twice, released before the
   player could walk into it, and no void regions were produced.
 - [ ] **Phase 3 — Polish.** In rough priority order:
-  - [ ] **Teleport safety** — the last routine way to land in unbaked terrain. Make
-    non-`goto` teleports (plain `/tp`, portals, other plugins' warps) bake their arrival
-    view first, the way `/arnis goto` does, rather than being exempt from the barrier.
+  - [x] **Teleport safety** — done; see §2 Safe teleports.
   - [ ] **Queue discipline** — bakes are queued unbounded and FIFO, so a fast or
     multi-directional party can build a long backlog whose head is no longer near
     anybody. Prioritise by distance to the nearest player and drop entries nobody is

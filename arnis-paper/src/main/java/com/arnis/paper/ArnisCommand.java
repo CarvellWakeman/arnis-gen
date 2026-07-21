@@ -128,7 +128,8 @@ public final class ArnisCommand implements TabExecutor {
                 ? "on (radius " + c.prefetchRadius + ", " + c.workers + " workers, lookahead "
                         + (c.leadSeconds > 0 ? c.leadSeconds + "s" : "off") + ")"
                 : "off"));
-        sender.sendMessage("  barrier: " + (c.barrier && c.streamingEnabled ? "on" : "off"));
+        sender.sendMessage("  barrier: " + (c.barrier && c.streamingEnabled ? "on" : "off")
+                + ", safe-teleport: " + (c.safeTeleport && c.streamingEnabled ? "on" : "off"));
         if (svc != null) {
             sender.sendMessage("  regions baked: " + svc.bakedCount()
                     + " (in flight: " + svc.inFlightCount()

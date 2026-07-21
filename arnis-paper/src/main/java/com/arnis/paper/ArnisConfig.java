@@ -45,6 +45,8 @@ public final class ArnisConfig {
     public final int maxRepairsPerScan;
     /** Hold players at the edge of baked terrain rather than letting them outrun it. */
     public final boolean barrier;
+    /** Defer a teleport into unbaked terrain until its arrival view is baked. */
+    public final boolean safeTeleport;
     /** Seconds of travel to keep baked ahead of a moving player; 0 disables prediction. */
     public final double leadSeconds;
 
@@ -70,6 +72,7 @@ public final class ArnisConfig {
             boolean repairUnbaked,
             int maxRepairsPerScan,
             boolean barrier,
+            boolean safeTeleport,
             double leadSeconds) {
         this.worldName = worldName;
         this.originLat = originLat;
@@ -94,6 +97,7 @@ public final class ArnisConfig {
         this.repairUnbaked = repairUnbaked;
         this.maxRepairsPerScan = maxRepairsPerScan;
         this.barrier = barrier;
+        this.safeTeleport = safeTeleport;
         this.leadSeconds = leadSeconds;
     }
 
@@ -128,6 +132,7 @@ public final class ArnisConfig {
                 c.getBoolean("streaming.repair-unbaked", true),
                 Math.max(0, c.getInt("streaming.max-repairs-per-scan", 2)),
                 c.getBoolean("streaming.barrier", true),
+                c.getBoolean("streaming.safe-teleport", true),
                 Math.max(0.0, c.getDouble("streaming.lead-seconds", 60.0)));
     }
 }

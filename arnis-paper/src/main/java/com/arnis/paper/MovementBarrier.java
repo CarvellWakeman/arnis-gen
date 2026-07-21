@@ -12,8 +12,12 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -33,9 +37,8 @@ import java.util.UUID;
  * short of the unbaked edge, before the server generates anything.
  *
  * <p>Deliberately permissive in two cases: teleports are exempt (they bake their own
- * destination first, and cancelling them would break {@code /arnis goto}), and a
- * player who is <em>already</em> in unbaked space is never blocked, so a barrier can
- * never trap someone in a hole.
+ * destination first — see {@link #onTeleport}), and a player who is <em>already</em>
+ * in unbaked space is never blocked, so a barrier can never trap someone in a hole.
  */
 public final class MovementBarrier implements Listener {
 
@@ -49,19 +52,28 @@ public final class MovementBarrier implements Listener {
     private final World world;
     private final BakeService bakeService;
     private final File worldDir;
+    private final boolean barrier;
+    private final boolean safeTeleport;
     private final Map<UUID, Long> lastNotice = new HashMap<>();
+    /** Destination each waiting player will be sent to once their terrain is baked. */
+    private final Map<UUID, Location> pendingTeleports = new HashMap<>();
+    /** Players whose teleport we are re-issuing ourselves, so it passes straight through. */
+    private final Set<UUID> reissuing = new HashSet<>();
 
-    public MovementBarrier(ArnisPlugin plugin, World world, BakeService bakeService) {
+    public MovementBarrier(ArnisPlugin plugin, World world, BakeService bakeService,
+                           boolean barrier, boolean safeTeleport) {
         this.plugin = plugin;
         this.world = world;
         this.bakeService = bakeService;
         this.worldDir = world.getWorldFolder();
+        this.barrier = barrier;
+        this.safeTeleport = safeTeleport;
     }
 
     @EventHandler(priority = EventPriority.NORMAL, ignoreCancelled = true)
     public void onMove(PlayerMoveEvent event) {
-        if (event instanceof PlayerTeleportEvent) {
-            return; // goto/tp bake their destination first; cancelling would break them
+        if (!barrier || event instanceof PlayerTeleportEvent) {
+            return; // teleports are handled by onTeleport, which waits rather than blocks
         }
         Location to = event.getTo();
         Location from = event.getFrom();
@@ -99,6 +111,90 @@ public final class MovementBarrier implements Listener {
         lastNotice.put(player.getUniqueId(), now);
         player.sendActionBar(Component.text("Generating terrain ahead..."));
         requestBakes(to.getBlockX(), to.getBlockZ());
+    }
+
+    /**
+     * Defers a teleport into unbaked terrain until its arrival view is baked.
+     *
+     * <p>A teleport is the worst case the barrier cannot cover: it drops a player
+     * somewhere arbitrary with no lead time at all, and blocking it outright would
+     * only strand them. So the teleport is cancelled, the destination's view footprint
+     * is baked, and the teleport is then re-issued — the same thing
+     * {@code /arnis goto} has always done, generalised to every other teleport.
+     *
+     * <p>Regions the server already has loaded are not waited on: baking over an open
+     * region file is what corrupts it, and such a region is already in the repair
+     * sweep's hands.
+     */
+    @EventHandler(priority = EventPriority.NORMAL, ignoreCancelled = true)
+    public void onTeleport(PlayerTeleportEvent event) {
+        if (!safeTeleport) {
+            return;
+        }
+        Player player = event.getPlayer();
+        UUID id = player.getUniqueId();
+        if (reissuing.contains(id)) {
+            return; // our own re-issue of an already-prepared destination
+        }
+        Location to = event.getTo();
+        if (to == null || !world.equals(to.getWorld()) || player.hasPermission(BYPASS)) {
+            return;
+        }
+
+        List<int[]> needed = bakeableUnbaked(to.getBlockX(), to.getBlockZ());
+        if (needed.isEmpty()) {
+            return; // destination is ready (this is the path /arnis goto takes)
+        }
+
+        event.setCancelled(true);
+        Location target = to.clone();
+        pendingTeleports.put(id, target);
+        player.sendMessage("Preparing terrain at your destination (" + needed.size()
+                + " region(s)); you will be moved when it is ready.");
+
+        // Arrive only once every region is done. Callbacks all run on the main thread,
+        // so these counters need no locking — the same pattern /arnis goto uses.
+        int[] remaining = {needed.size()};
+        boolean[] allOk = {true};
+        for (int[] region : needed) {
+            bakeService.submit(worldDir, region[0], region[1], ok -> {
+                if (!ok) {
+                    allOk[0] = false;
+                }
+                if (--remaining[0] > 0) {
+                    return;
+                }
+                if (!target.equals(pendingTeleports.get(id))) {
+                    return; // a later teleport request superseded this one
+                }
+                pendingTeleports.remove(id);
+                if (!player.isOnline()) {
+                    return;
+                }
+                if (!allOk[0]) {
+                    player.sendMessage("Could not prepare terrain there; teleport cancelled.");
+                    return;
+                }
+                reissuing.add(id);
+                try {
+                    player.teleport(target);
+                } finally {
+                    reissuing.remove(id);
+                }
+            });
+        }
+    }
+
+    /** Regions of this view footprint that are unbaked and safe for arnis to write. */
+    private List<int[]> bakeableUnbaked(int x, int z) {
+        List<int[]> out = new ArrayList<>();
+        for (int[] region : plugin.regionsAroundView(x, z)) {
+            if (bakeService.isBaked(region[0], region[1]) || isRegionLoaded(region[0], region[1])) {
+                continue;
+            }
+            out.add(region);
+        }
+        return out;
     }
 
     /** Whether every region a player at {@code (x, z)} would load is baked. */
@@ -144,6 +240,8 @@ public final class MovementBarrier implements Listener {
 
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
-        lastNotice.remove(event.getPlayer().getUniqueId());
+        UUID id = event.getPlayer().getUniqueId();
+        lastNotice.remove(id);
+        pendingTeleports.remove(id);
     }
 }

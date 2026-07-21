@@ -123,6 +123,7 @@ streaming:
   repair-unbaked: true       # re-bake regions the server generated before arnis got there
   max-repairs-per-scan: 2
   barrier: true              # hold players at the edge of baked terrain
+  safe-teleport: true        # defer teleports until the arrival view is baked
   lead-seconds: 60           # seconds of travel kept baked ahead along the direction of travel
 ```
 
@@ -307,12 +308,12 @@ the barrier prevents.
 - **Console `goto` and negative longitudes:** from the *server console*, a space before
   a negative longitude can be misparsed — use the comma form `goto 51.515,-0.115`.
   In-game chat, both `goto 51.515 -0.115` and the comma form work.
-- **Enter new areas with `/arnis goto`.** Streaming bakes *ahead* of players; `goto` and
-  spawn bake the whole area your view will reach on arrival — not just the one region you
-  land in — because a player dropped next to an unbaked neighbour makes the server
-  generate it as void. Teleports are exempt from the barrier (it would otherwise block
-  `goto` itself), so a plain `/tp` into fresh terrain is the one routine way to still
-  land in void.
+- **Teleports wait for their destination.** `goto`, spawn, and — with
+  `safe-teleport: true` — any other teleport bake the whole area your view will reach on
+  arrival, not just the region you land in, because a player dropped next to an unbaked
+  neighbour makes the server generate it as void. A `/tp` into fresh terrain therefore
+  pauses ("Preparing terrain at your destination...") and moves you when it's ready,
+  rather than landing you in a hole. Expect that pause to be 30–60 s for a cold area.
 - **Players get held at the frontier when they outrun generation.** Flying is much
   faster than baking (a sprint-flying player crosses a region in ~23 s; a cold bake
   takes 30–60 s), so `barrier: true` stops them about a view distance short of unbaked
@@ -384,11 +385,6 @@ the barrier prevents.
 
 ## Current limitations (early build)
 
-- **Teleports other than `/arnis goto` can still outrun generation.** The barrier only
-  governs walking and flying; `/arnis goto` and the spawn pre-bake bake their whole
-  arrival view first, but a plain `/tp`, a portal, or another plugin's warp can drop a
-  player into unbaked terrain. That region is then re-baked automatically, though it may
-  take a restart to show. Prefer `/arnis goto` for jumping to fresh areas.
 - **Repaired regions may need a restart to appear.** The server caches an open handle
   per region file, so a region it generated itself and then arnis re-baked can keep
   serving the old contents until a restart, even though the correct terrain is on disk.
