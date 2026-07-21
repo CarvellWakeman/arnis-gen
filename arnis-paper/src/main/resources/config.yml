@@ -1,0 +1,62 @@
+# Arnis on-demand terrain generator configuration.
+
+# The Bukkit world arnis manages. Created on enable if it does not exist, using
+# the void generator (baked regions load from disk; everything else is void).
+world: arnis
+
+# Real-world anchor: this latitude/longitude maps to Minecraft (0,0). Shared by
+# every region bake so independently generated regions line up seamlessly.
+# Changing this after regions exist invalidates them.
+origin:
+  lat: 51.515
+  lng: -0.115
+
+# Blocks per meter.
+scale: 1.0
+
+# Extra blocks fetched around each region for cross-boundary context
+# (roads/rivers/relations spanning the edge). Rendered but not committed.
+bake-margin: 64
+
+# Ground-level offset passed to arnis (matches arnis's --ground-level).
+ground-level: -62
+
+# --- Vertical mapping (shared by every region so they line up vertically) ---
+# Minecraft blocks per real-world metre of elevation. Defaults to `scale` (1:1 at
+# scale 1). Raise for more dramatic relief, lower to flatten.
+vertical-scale: 1.0
+# Real-world elevation (metres) that maps to `ground-level`. 0 = sea level, which
+# suits low/coastal areas (land sits above ground level). For a high-altitude area,
+# set this near that area's base elevation so terrain isn't buried under deep stone.
+elevation-base: 0.0
+
+# Path to the arnis executable (the Rust binary). Use an absolute path unless it
+# is on the server process's PATH.
+arnis-binary: "arnis"
+
+# Bake the spawn region when the plugin first enables so spawn has real terrain.
+bake-spawn-on-enable: true
+
+# Spawn point in Minecraft X/Z. Y is derived from the baked terrain.
+# Prefer a point near the CENTRE of a region (multiples of 512, + ~256) so the
+# initial view stays inside one region and only that region is pre-baked at first
+# start. A spawn near a region edge makes the view spill into neighbours, which are
+# then pre-baked too (correct, but a slower first start).
+spawn:
+  x: 256
+  z: 256
+
+# --- Automatic streaming (Phase 2) ---
+streaming:
+  # Bake regions ahead of players automatically as they explore.
+  enabled: true
+  # How many regions out from each player to keep baked (1 region = 512 blocks).
+  # Keep this comfortably larger than the server view-distance so regions are
+  # baked before the server ever loads them.
+  prefetch-radius: 2
+  # Concurrent bake subprocesses. Each one fetches map data and uses a CPU core.
+  workers: 2
+  # How often the tracker scans player positions, in server ticks (20 = 1s).
+  interval-ticks: 40
+  # Cap on new bakes queued per scan, to avoid flooding on teleports.
+  max-per-scan: 8

@@ -177,6 +177,11 @@ pub struct WorldEditor<'a> {
     start_with_map: bool,
     /// Place bundled map image decals as map item frames. Java only.
     map_decals: bool,
+    /// Region-bake mode (server terrain generator): when `Some((rx, rz))`, only
+    /// that one region's `.mca` is written on save and world metadata is skipped.
+    /// The editor still renders a wider (haloed) area for cross-boundary context;
+    /// this restricts what is *committed* to disk. Java only.
+    bake_target_region: Option<(i32, i32)>,
 }
 
 impl<'a> WorldEditor<'a> {
@@ -213,6 +218,7 @@ impl<'a> WorldEditor<'a> {
             world_time: 6000,
             start_with_map: false,
             map_decals: false,
+            bake_target_region: None,
         }
     }
 
@@ -255,6 +261,7 @@ impl<'a> WorldEditor<'a> {
             world_time: 6000,
             start_with_map: false,
             map_decals: false,
+            bake_target_region: None,
         }
     }
 
@@ -297,6 +304,7 @@ impl<'a> WorldEditor<'a> {
             world_time: 6000,
             start_with_map: false,
             map_decals: false,
+            bake_target_region: None,
         }
     }
 
@@ -371,6 +379,11 @@ impl<'a> WorldEditor<'a> {
     /// Enable map image decals (Java only).
     pub fn set_map_decals(&mut self, enabled: bool) {
         self.map_decals = enabled;
+    }
+
+    /// Restrict save to a single region and skip world metadata (region-bake mode).
+    pub fn set_bake_target_region(&mut self, region: (i32, i32)) {
+        self.bake_target_region = Some(region);
     }
 
     /// True if image decals should be placed.

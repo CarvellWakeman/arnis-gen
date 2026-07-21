@@ -135,6 +135,72 @@ impl CoordTransformer {
         ))
     }
 
+    /// Create a `CoordTransformer` using Web Mercator with an **explicit, fixed
+    /// origin** rather than the `llbbox` center.
+    ///
+    /// This is what makes independent region bakes line up seamlessly: every
+    /// bake shares one global origin, so a given latitude/longitude always maps
+    /// to the same Minecraft coordinate regardless of which region's `llbbox`
+    /// happens to be passed in. Both the returned `XZBBox` envelope and
+    /// `transform_point` are derived from `(origin_lat, origin_lon)`, so they are
+    /// mutually consistent (unlike `with_projection`, which recomputes its
+    /// point-transform origin from the bbox center).
+    pub fn with_web_mercator_origin(
+        llbbox: &LLBBox,
+        scale: f64,
+        origin_lat: f64,
+        origin_lon: f64,
+    ) -> Result<(CoordTransformer, XZBBox), String> {
+        if scale <= 0.0 {
+            return Err("Scale must be > 0.0".to_string());
+        }
+
+        let proj = crate::projection::WebMercatorProjection::new(origin_lat, origin_lon, scale);
+        use crate::projection::Projection;
+
+        // Envelope of all four projected corners.
+        let (x_nw, z_nw) = proj.forward(llbbox.max().lat(), llbbox.min().lng());
+        let (x_se, z_se) = proj.forward(llbbox.min().lat(), llbbox.max().lng());
+        let (x_ne, z_ne) = proj.forward(llbbox.max().lat(), llbbox.max().lng());
+        let (x_sw, z_sw) = proj.forward(llbbox.min().lat(), llbbox.min().lng());
+
+        let x_min = x_nw.min(x_sw).min(x_ne).min(x_se).floor() as i32;
+        let x_max = x_nw.max(x_sw).max(x_ne).max(x_se).ceil() as i32;
+        let z_min = z_nw.min(z_sw).min(z_ne).min(z_se).floor() as i32;
+        let z_max = z_nw.max(z_sw).max(z_ne).max(z_se).ceil() as i32;
+
+        let xzbbox = XZBBox::rect_from_min_max(x_min, z_min, x_max, z_max)
+            .map_err(|e| format!("Failed to create XZBBox from projection: {}", e))?;
+
+        let cos_lat_ref = origin_lat.to_radians().cos();
+        // z_offset chosen so that forward(origin_lat, _) gives z = 0 (matches
+        // WebMercatorProjection::new).
+        let z_offset = EARTH_RADIUS
+            * (std::f64::consts::FRAC_PI_4 + origin_lat.to_radians() / 2.0)
+                .tan()
+                .ln()
+            * scale;
+
+        Ok((
+            CoordTransformer {
+                len_lat: llbbox.max().lat() - llbbox.min().lat(),
+                len_lng: llbbox.max().lng() - llbbox.min().lng(),
+                scale_factor_x: (x_max - x_min) as f64,
+                scale_factor_z: (z_max - z_min) as f64,
+                min_lat: llbbox.min().lat(),
+                min_lng: llbbox.min().lng(),
+                mode: ProjectionMode::WebMercator {
+                    origin_lat,
+                    origin_lon,
+                    scale,
+                    cos_lat_ref,
+                    z_offset,
+                },
+            },
+            xzbbox,
+        ))
+    }
+
     pub fn transform_point(&self, llpoint: LLPoint) -> XZPoint {
         match &self.mode {
             ProjectionMode::Local => {
@@ -443,5 +509,43 @@ mod test {
         let pt = transformer.transform_point(llpoint);
         assert_eq!(pt.x, expected_x);
         assert_eq!(pt.z, expected_z);
+    }
+
+    // ----- Fixed-origin Web Mercator (region-bake seamless guarantee) -----
+
+    #[test]
+    fn web_mercator_origin_maps_origin_to_zero() {
+        let (t, _) = CoordTransformer::with_web_mercator_origin(
+            &LLBBox::new(39.9, -75.1, 40.1, -74.9).unwrap(),
+            1.0,
+            40.0,
+            -75.0,
+        )
+        .unwrap();
+        let p = t.transform_point(LLPoint::new(40.0, -75.0).unwrap());
+        assert_eq!(p.x, 0);
+        assert_eq!(p.z, 0);
+    }
+
+    #[test]
+    fn web_mercator_origin_transform_is_bbox_independent() {
+        // The seamless-bake guarantee: with the same fixed origin, a lat/lon maps
+        // to the same Minecraft point regardless of which bbox the transformer was
+        // built from. (This is exactly what `with_projection` does NOT guarantee,
+        // since it recomputes its point-transform origin from the bbox center.)
+        let (origin_lat, origin_lon, scale) = (40.0, -75.0, 1.0);
+        let bbox_a = LLBBox::new(39.9, -75.2, 40.2, -74.8).unwrap();
+        let bbox_b = LLBBox::new(39.99, -75.02, 40.05, -74.95).unwrap();
+        let (ta, _) =
+            CoordTransformer::with_web_mercator_origin(&bbox_a, scale, origin_lat, origin_lon)
+                .unwrap();
+        let (tb, _) =
+            CoordTransformer::with_web_mercator_origin(&bbox_b, scale, origin_lat, origin_lon)
+                .unwrap();
+        let p = LLPoint::new(40.03, -74.97).unwrap();
+        let pa = ta.transform_point(p);
+        let pb = tb.transform_point(p);
+        assert_eq!(pa.x, pb.x);
+        assert_eq!(pa.z, pb.z);
     }
 }

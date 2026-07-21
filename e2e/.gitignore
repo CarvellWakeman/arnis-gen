@@ -1,0 +1,7 @@
+# Downloaded server jar + compile deps, and the throwaway server run dir.
+.cache/
+run/
+
+# The root .gitignore excludes *.ps1; the e2e harness scripts are deliverables.
+!smoke_test.ps1
+!primary_world_test.ps1

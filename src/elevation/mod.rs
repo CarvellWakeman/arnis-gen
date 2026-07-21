@@ -102,6 +102,7 @@ pub fn fetch_elevation_data(
     land_cover: Option<&mut LandCoverData>,
     source_mode: SourceMode,
     benchmark: bool,
+    vertical_datum: Option<(f64, f64)>,
 ) -> Result<ElevationData, Box<dyn std::error::Error>> {
     let mut bench = crate::bench::Bench::new(benchmark);
     let (world_width, world_height, grid_width, grid_height) = compute_grid_dims(bbox, scale);
@@ -187,6 +188,7 @@ pub fn fetch_elevation_data(
         ground_level,
         disable_height_limit,
         extended_max_y,
+        vertical_datum,
     );
     bench.mark("elev_scale_to_mc");
 

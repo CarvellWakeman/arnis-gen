@@ -7,9 +7,11 @@ use std::time::Duration;
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 pub struct Args {
-    /// Bounding box of the area (min_lat,min_lng,max_lat,max_lng) (required)
+    /// Bounding box of the area (min_lat,min_lng,max_lat,max_lng).
+    /// Required for normal generation; omitted in `--bake-region` mode, which
+    /// derives its own bbox from the region and `--origin`.
     #[arg(long, allow_hyphen_values = true, value_parser = LLBBox::from_str)]
-    pub bbox: LLBBox,
+    pub bbox: Option<LLBBox>,
 
     /// JSON file containing OSM data (optional)
     #[arg(long, group = "location")]
@@ -47,7 +49,7 @@ pub struct Args {
     pub projection: crate::projection::ProjectionKind,
 
     /// Ground level to use in the Minecraft world
-    #[arg(long, default_value_t = -62)]
+    #[arg(long, default_value_t = -62, allow_hyphen_values = true)]
     pub ground_level: i32,
 
     /// What to generate, mirroring the GUI's generation mode dropdown:
@@ -139,6 +141,80 @@ pub struct Args {
     /// Initial time of day in ticks (0 = dawn, 6000 = noon, 18000 = midnight)
     #[arg(long, default_value_t = 6000, value_parser = clap::value_parser!(i64).range(0..24000))]
     pub world_time: i64,
+
+    /// Bake a single Minecraft region on demand instead of a full world.
+    ///
+    /// Value is the region coordinate `rx,rz` (region = 512 blocks = 32 chunks).
+    /// The region's block bounds are inverse-projected through the fixed
+    /// `--origin` Web Mercator frame to derive the area to fetch, and only the
+    /// `r.rx.rz.mca` region file is written into `--output-dir`/region. Requires
+    /// `--origin`; Java Edition only. Used by the server-side terrain generator.
+    #[arg(long, value_parser = parse_region_coord, allow_hyphen_values = true)]
+    pub bake_region: Option<(i32, i32)>,
+
+    /// Fixed Web Mercator origin `lat,lng` shared by every region bake.
+    ///
+    /// This anchors the global coordinate frame so independent bakes line up
+    /// seamlessly: `(lat,lng)` maps to Minecraft `(0,0)`. Required with
+    /// `--bake-region`.
+    #[arg(long, value_parser = parse_lat_lng, allow_hyphen_values = true)]
+    pub origin: Option<(f64, f64)>,
+
+    /// Extra blocks fetched around a baked region for cross-boundary context
+    /// (roads/rivers/relations that span the edge). Rendered for context but not
+    /// written; only the target region file is committed.
+    #[arg(long, default_value_t = 64)]
+    pub bake_margin: i32,
+
+    /// Vertical scale in Minecraft blocks per real-world meter of elevation, shared
+    /// by every region bake so regions line up vertically instead of faulting at
+    /// their boundaries. Region-bake mode only; defaults to `--scale`.
+    #[arg(long)]
+    pub vertical_scale: Option<f64>,
+
+    /// Real-world elevation (meters) that maps to `--ground-level`, shared by every
+    /// region bake as the common vertical datum. Region-bake mode only; defaults to
+    /// 0 (sea level), so land sits above ground level.
+    #[arg(long, allow_hyphen_values = true)]
+    pub elevation_base: Option<f64>,
+}
+
+/// Parse a `rx,rz` region coordinate pair.
+fn parse_region_coord(s: &str) -> Result<(i32, i32), String> {
+    let (a, b) = s
+        .split_once(',')
+        .ok_or_else(|| format!("expected 'rx,rz', got '{s}'"))?;
+    let rx = a
+        .trim()
+        .parse::<i32>()
+        .map_err(|e| format!("invalid rx '{a}': {e}"))?;
+    let rz = b
+        .trim()
+        .parse::<i32>()
+        .map_err(|e| format!("invalid rz '{b}': {e}"))?;
+    Ok((rx, rz))
+}
+
+/// Parse a `lat,lng` pair (degrees).
+fn parse_lat_lng(s: &str) -> Result<(f64, f64), String> {
+    let (a, b) = s
+        .split_once(',')
+        .ok_or_else(|| format!("expected 'lat,lng', got '{s}'"))?;
+    let lat = a
+        .trim()
+        .parse::<f64>()
+        .map_err(|e| format!("invalid lat '{a}': {e}"))?;
+    let lng = b
+        .trim()
+        .parse::<f64>()
+        .map_err(|e| format!("invalid lng '{b}': {e}"))?;
+    if !(-90.0..=90.0).contains(&lat) {
+        return Err(format!("latitude out of range: {lat}"));
+    }
+    if !(-180.0..=180.0).contains(&lng) {
+        return Err(format!("longitude out of range: {lng}"));
+    }
+    Ok((lat, lng))
 }
 
 /// Generation mode, matching the GUI's dropdown (src/gui/js/main.js).
@@ -166,6 +242,15 @@ impl GenerationMode {
 }
 
 impl Args {
+    /// The bounding box, which is always present outside `--bake-region` mode.
+    ///
+    /// In bake mode the orchestrator sets `bbox` to the region-derived box
+    /// before any generation runs, so this is safe to call there too.
+    pub fn bbox(&self) -> LLBBox {
+        self.bbox
+            .expect("bbox is required (set for --bake-region before generation)")
+    }
+
     /// Whether this run uses real elevation terrain rather than flat ground.
     pub fn terrain(&self) -> bool {
         self.mode.terrain()
@@ -174,6 +259,20 @@ impl Args {
     /// Whether this run skips OSM/Overture objects (terrain-only).
     pub fn skip_objects(&self) -> bool {
         self.mode.skip_objects()
+    }
+
+    /// Fixed vertical datum `(elevation_base_m, blocks_per_meter)` for region bakes,
+    /// so the same real elevation maps to the same Y in every region. `None` outside
+    /// bake mode keeps the adaptive per-run scaling used for full-world generation.
+    pub fn vertical_datum(&self) -> Option<(f64, f64)> {
+        if self.bake_region.is_some() {
+            Some((
+                self.elevation_base.unwrap_or(0.0),
+                self.vertical_scale.unwrap_or(self.scale),
+            ))
+        } else {
+            None
+        }
     }
 }
 
@@ -216,6 +315,30 @@ impl GameMode {
 pub fn validate_args(args: &Args) -> Result<(), String> {
     if args.bedrock && args.luanti {
         return Err("Cannot use --bedrock and --luanti together.".to_string());
+    }
+
+    // Region-bake mode (server terrain generator): fixed origin + a world dir to
+    // write into, Java Anvil only.
+    if args.bake_region.is_some() {
+        if args.origin.is_none() {
+            return Err("--bake-region requires --origin lat,lng (the fixed global frame).".to_string());
+        }
+        if args.bedrock || args.luanti {
+            return Err("--bake-region is only supported for Java Edition.".to_string());
+        }
+        if args.path.is_none() {
+            return Err(
+                "--bake-region requires --output-dir pointing at the world directory to write into."
+                    .to_string(),
+            );
+        }
+        if args.bake_margin < 0 {
+            return Err("--bake-margin must be >= 0.".to_string());
+        }
+        // Bake mode drives its own bbox from the region; the remaining checks
+        // (spawn/rotation) below are still applied and remain valid.
+    } else if args.bbox.is_none() {
+        return Err("The --bbox argument is required (min_lat,min_lng,max_lat,max_lng).".to_string());
     }
 
     // The legacy --terrain flag is redundant now that terrain is the default, but it must
@@ -284,8 +407,9 @@ pub fn validate_args(args: &Args) -> Result<(), String> {
             let llpoint =
                 LLPoint::new(lat, lng).map_err(|e| format!("Invalid spawn coordinates: {e}"))?;
 
-            // Validate that spawn point is within the bounding box
-            if !args.bbox.contains(&llpoint) {
+            // Validate that spawn point is within the bounding box.
+            // (Spawn is not used in bake mode, where bbox is None.)
+            if args.bbox.map(|b| !b.contains(&llpoint)).unwrap_or(false) {
                 return Err(
                     "Spawn point (--spawn-lat, --spawn-lng) must be within the bounding box."
                         .to_string(),
@@ -518,8 +642,11 @@ mod tests {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmp_path = tmpdir.path().to_str().unwrap();
 
+        // With no bbox, parsing now succeeds (bbox is optional so --bake-region
+        // can derive its own) but validation rejects the missing bbox.
         let cmd = ["arnis"];
-        assert!(Args::try_parse_from(cmd.iter()).is_err());
+        let args = Args::try_parse_from(cmd.iter()).unwrap();
+        assert!(validate_args(&args).is_err());
 
         let cmd = ["arnis", "--output-dir", tmp_path, "--bbox", "1,2,3,4"];
         let args = Args::try_parse_from(cmd.iter()).unwrap();
@@ -530,8 +657,10 @@ mod tests {
         let args = Args::try_parse_from(cmd.iter()).unwrap();
         assert!(validate_args(&args).is_ok());
 
+        // --file without a bbox: parses, but validation rejects the missing bbox.
         let cmd = ["arnis", "--output-dir", tmp_path, "--file", ""];
-        assert!(Args::try_parse_from(cmd.iter()).is_err());
+        let args = Args::try_parse_from(cmd.iter()).unwrap();
+        assert!(validate_args(&args).is_err());
 
         // The --gui flag isn't used here, ugh. TODO clean up main.rs and its argparse usage.
         // let cmd = ["arnis", "--gui"];

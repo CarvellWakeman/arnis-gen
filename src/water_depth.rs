@@ -17,7 +17,7 @@ const SHOAL_DT_UNITS: u16 = 9;
 const DT_MAX: u8 = u8::MAX;
 
 /// Maximum water carve depth, in blocks (the deepest tier).
-const MAX_WATER_DEPTH: i32 = 6;
+pub(crate) const MAX_WATER_DEPTH: i32 = 6;
 
 /// Cap on water sub-rect cells (bounds memory, keeps u32 indices valid); ~1000 km².
 const MAX_WATER_FIELD_CELLS: usize = 1_000_000_000;
