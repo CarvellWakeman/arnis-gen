@@ -116,8 +116,18 @@ foreach ($d in @($Classes, $Stage)) {
 $srcRoot = Join-Path $RepoRoot "arnis-paper\src\main\java"
 $sources = Get-ChildItem $srcRoot -Recurse -Filter *.java | ForEach-Object { $_.FullName }
 Info "Compiling plugin ($($sources.Count) sources)..."
-& $Javac --release 21 -cp (Join-Path $LibsDir "*") -d $Classes $sources
-if ($LASTEXITCODE -ne 0) { Fail "plugin compilation failed" }
+# javac writes notes/warnings (e.g. deprecation) to stderr even on success; under
+# ErrorActionPreference=Stop that would trip a terminating NativeCommandError, so
+# capture output and gate on the exit code instead.
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+$javacOut = & $Javac --release 21 -cp (Join-Path $LibsDir "*") -d $Classes $sources 2>&1
+$javacExit = $LASTEXITCODE
+$ErrorActionPreference = $prevEAP
+if ($javacExit -ne 0) {
+    $javacOut | ForEach-Object { Write-Host $_ }
+    Fail "plugin compilation failed"
+}
 
 # Stage classes + resources (substituting the version placeholder in plugin.yml).
 Copy-Item (Join-Path $Classes "com") -Destination $Stage -Recurse -Force

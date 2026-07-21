@@ -154,11 +154,10 @@ world instead, make it the server's primary world:
    `Preparing level "arnis"` followed by `[ArnisGen] Arnis world 'arnis' ready.`
    and no "Could not set generator" error.
 
-**First-boot spawn:** the spawn region is baked while its chunks are already loaded,
-so on the very first boot spawn may be in the void. **Restart once** after you see
-`Spawn region baked.` in the console — on the next boot spawn loads the baked terrain
-and lands on the surface. This only affects the spawn region; everywhere else streams
-in cleanly, and `/arnis goto` works regardless.
+**Spawn:** on enable the plugin bakes the spawn region and moves spawn onto the
+baked surface. The first bake takes ~30–60 s — watch for `[ArnisGen] Spawn region
+baked.` in the console. If you join before it finishes you'll briefly be in the void;
+just reconnect once it's baked.
 
 ---
 
@@ -192,10 +191,10 @@ All require the `arnis.admin` permission (op by default).
   chunks, set `prefetch-radius` ≥ `ceil(N × 16 / 512) + 1` so regions are baked before
   the server tries to load them. A modest `view-distance` (4–8) plus `prefetch-radius: 2`
   is a good starting point.
-- **Spawn/prewarm terrain may need a restart to appear.** Reflecting a freshly baked
-  region that the server *already* had resident (like spawn) is best-effort; a restart
-  always loads it cleanly. Terrain you *stream into* by exploring loads cleanly with no
-  restart.
+- **`prewarm` of the region you're standing in is best-effort.** Terrain you *stream
+  into* by exploring loads cleanly, and the spawn region is handled automatically. But
+  a `prewarm`/`goto` bake of a region the server *already* has resident around you may
+  not refresh until those chunks reload (walk away and back, or reconnect).
 - **World height:** arnis targets the vanilla range with `ground-level -62`. Leave the
   defaults unless you have a reason to change them.
 - **Be considerate of data sources.** Heavy, wide-ranging exploration makes many

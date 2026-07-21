@@ -1,5 +1,6 @@
 package com.arnis.paper;
 
+import org.bukkit.GameRule;
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
 import org.bukkit.command.PluginCommand;
@@ -67,6 +68,14 @@ public final class ArnisPlugin extends JavaPlugin {
             return;
         }
         getLogger().info("Arnis world '" + config.worldName + "' ready.");
+
+        // Don't keep spawn chunks resident. Otherwise the server holds the void
+        // spawn chunks it generated at startup and saves them back over the region
+        // arnis bakes there — leaving a void hole at spawn while everything else
+        // (baked ahead of players, never resident as void) is fine. With this off,
+        // the baked spawn region survives and loads from disk on demand.
+        arnisWorld.setGameRule(GameRule.SPAWN_CHUNK_RADIUS, 0);
+
         bakeService.initFromDisk(arnisWorld.getWorldFolder());
 
         // If the arnis binary is a path that doesn't exist, don't even try to bake:
