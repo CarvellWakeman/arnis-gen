@@ -4,11 +4,11 @@ import org.bukkit.plugin.Plugin;
 
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.logging.Level;
 
 /**
  * Runs the arnis Rust engine as a subprocess to bake a single Minecraft region
@@ -92,12 +92,20 @@ public final class RegionBaker {
                     + (resultLine != null ? ": " + resultLine : " (no result line)");
             plugin.getLogger().warning(detail);
             return new Result(false, detail);
-        } catch (Exception e) {
-            plugin.getLogger().log(Level.SEVERE,
-                    "Failed to run arnis for region " + rx + "," + rz
-                            + " (binary '" + config.arnisBinary + "')",
-                    e);
-            return new Result(false, String.valueOf(e.getMessage()));
+        } catch (IOException e) {
+            // Almost always: the arnis executable could not be found or run. Keep it
+            // to a single actionable line rather than a stack trace — this is the
+            // expected first-run state until 'arnis-binary' is configured.
+            String detail = "Could not run the arnis executable '" + config.arnisBinary
+                    + "': " + e.getMessage()
+                    + ". Set 'arnis-binary' in the plugin config to the absolute path of"
+                    + " the arnis executable and restart (see SERVER_SETUP.md).";
+            plugin.getLogger().warning(detail);
+            return new Result(false, detail);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            plugin.getLogger().warning("arnis bake for region " + rx + "," + rz + " was interrupted.");
+            return new Result(false, "interrupted");
         }
     }
 }

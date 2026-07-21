@@ -55,6 +55,16 @@ public final class ArnisPlugin extends JavaPlugin {
             getLogger().severe("Command 'arnis' is not defined in plugin.yml.");
         }
 
+        // If the arnis binary is a path that doesn't exist, don't even try to bake:
+        // warn once with an actionable message and leave the world void until it's set.
+        if (!arnisBinaryConfigured()) {
+            getLogger().warning("arnis executable '" + config.arnisBinary + "' was not found. "
+                    + "Terrain baking is disabled until you set 'arnis-binary' to the absolute "
+                    + "path of the arnis executable in plugins/" + getName()
+                    + "/config.yml and restart the server (see SERVER_SETUP.md).");
+            return;
+        }
+
         if (config.bakeSpawnOnEnable) {
             bakeSpawnRegion();
         }
@@ -65,6 +75,19 @@ public final class ArnisPlugin extends JavaPlugin {
                     + " region(s), " + config.workers + " worker(s), scan every "
                     + config.intervalTicks + " ticks.");
         }
+    }
+
+    /**
+     * Whether the configured arnis binary looks usable. A path is checked for
+     * existence; a bare command name is assumed resolvable via PATH (a failed run
+     * then reports a clear message from {@link RegionBaker}). This only suppresses
+     * baking for the unambiguous "path given but missing" case, so it never
+     * disables a working setup by mistake.
+     */
+    private boolean arnisBinaryConfigured() {
+        String bin = config.arnisBinary;
+        boolean looksLikePath = bin.contains("/") || bin.contains("\\");
+        return !looksLikePath || new File(bin).isFile();
     }
 
     @Override
