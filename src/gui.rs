@@ -1219,6 +1219,8 @@ fn gui_start_generation(
                 bake_region: None,
                 origin: None,
                 bake_margin: 64,
+                vertical_scale: None,
+                elevation_base: None,
             };
 
             // If skip_osm_objects is true (terrain-only mode), skip fetching and processing OSM data

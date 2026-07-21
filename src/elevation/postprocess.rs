@@ -1205,7 +1205,35 @@ pub fn scale_to_minecraft(
     ground_level: i32,
     disable_height_limit: bool,
     extended_max_y: i32,
+    fixed_datum: Option<(f64, f64)>,
 ) -> (Vec<Vec<f64>>, f64, f64) {
+    let effective_max_y = if disable_height_limit {
+        extended_max_y
+    } else {
+        MAX_Y
+    };
+    let upper_clamp = (effective_max_y - TERRAIN_HEIGHT_BUFFER) as f64;
+
+    // Region-bake mode: a fixed, globally shared datum and vertical scale, so the
+    // SAME real-world elevation maps to the SAME Minecraft Y in every region.
+    // Independently baked regions then line up vertically instead of faulting at
+    // their boundaries (each region's own min/range would otherwise shift it).
+    if let Some((datum_m, blocks_per_meter)) = fixed_datum {
+        let mc_heights: Vec<Vec<f64>> = blurred_heights
+            .par_iter()
+            .map(|row| {
+                row.iter()
+                    .map(|&h| {
+                        // NaN (no-data) stays NaN through the arithmetic + clamp.
+                        let mc_y = ground_level as f64 + (h - datum_m) * blocks_per_meter;
+                        mc_y.clamp(ground_level as f64, upper_clamp)
+                    })
+                    .collect()
+            })
+            .collect();
+        return (mc_heights, datum_m, blocks_per_meter);
+    }
+
     // Derive min/max
     let (min_height, max_height) = blurred_heights
         .par_iter()
@@ -1240,13 +1268,6 @@ pub fn scale_to_minecraft(
         } else {
             (min_height, max_height - min_height)
         };
-
-    let effective_max_y = if disable_height_limit {
-        extended_max_y
-    } else {
-        MAX_Y
-    };
-    let upper_clamp = (effective_max_y - TERRAIN_HEIGHT_BUFFER) as f64;
 
     let ideal_scaled_range: f64 = height_range * scale;
     let available_y_range: f64 = (effective_max_y - TERRAIN_HEIGHT_BUFFER - ground_level) as f64;
@@ -1305,7 +1326,7 @@ mod tests {
         // Zero-relief terrain must still report its true elevation so the snow
         // line can tell a high plateau from a low one.
         let grid = vec![vec![4500.0_f64; 4]; 4];
-        let (mc, min_m, blocks_per_meter) = scale_to_minecraft(&grid, 1.0, 64, false, 0);
+        let (mc, min_m, blocks_per_meter) = scale_to_minecraft(&grid, 1.0, 64, false, 0, None);
         assert_eq!(min_m, 4500.0);
         assert_eq!(blocks_per_meter, 0.0);
         // Every cell flattens to ground level.
@@ -1313,10 +1334,26 @@ mod tests {
     }
 
     #[test]
+    fn fixed_datum_maps_elevation_independently_of_grid_range() {
+        // The region-bake guarantee: with a shared datum + scale, a given real
+        // elevation maps to the same Y regardless of the local min/max. Two grids
+        // whose ranges differ wildly must agree at a common elevation (100 m).
+        let a = vec![vec![100.0_f64, 5.0], vec![5.0, 40.0]]; // min 5
+        let b = vec![vec![100.0_f64, 90.0], vec![90.0, 300.0]]; // min 90
+        let (ma, datum_a, bpm_a) = scale_to_minecraft(&a, 1.0, -62, false, 0, Some((0.0, 1.0)));
+        let (mb, datum_b, bpm_b) = scale_to_minecraft(&b, 1.0, -62, false, 0, Some((0.0, 1.0)));
+        assert_eq!((datum_a, bpm_a), (0.0, 1.0));
+        assert_eq!((datum_b, bpm_b), (0.0, 1.0));
+        // 100 m elevation -> ground_level(-62) + (100-0)*1 = 38 in BOTH grids.
+        assert_eq!(ma[0][0], 38.0);
+        assert_eq!(mb[0][0], 38.0);
+    }
+
+    #[test]
     fn scale_all_nan_grid_min_height_zero() {
         // No finite samples must not leak the f64::MAX reduce sentinel as min.
         let grid = vec![vec![f64::NAN; 4]; 4];
-        let (_mc, min_m, blocks_per_meter) = scale_to_minecraft(&grid, 1.0, 64, false, 0);
+        let (_mc, min_m, blocks_per_meter) = scale_to_minecraft(&grid, 1.0, 64, false, 0, None);
         assert_eq!(min_m, 0.0);
         assert_eq!(blocks_per_meter, 0.0);
     }

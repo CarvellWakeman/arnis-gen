@@ -165,6 +165,18 @@ pub struct Args {
     /// written; only the target region file is committed.
     #[arg(long, default_value_t = 64)]
     pub bake_margin: i32,
+
+    /// Vertical scale in Minecraft blocks per real-world meter of elevation, shared
+    /// by every region bake so regions line up vertically instead of faulting at
+    /// their boundaries. Region-bake mode only; defaults to `--scale`.
+    #[arg(long)]
+    pub vertical_scale: Option<f64>,
+
+    /// Real-world elevation (meters) that maps to `--ground-level`, shared by every
+    /// region bake as the common vertical datum. Region-bake mode only; defaults to
+    /// 0 (sea level), so land sits above ground level.
+    #[arg(long, allow_hyphen_values = true)]
+    pub elevation_base: Option<f64>,
 }
 
 /// Parse a `rx,rz` region coordinate pair.
@@ -247,6 +259,20 @@ impl Args {
     /// Whether this run skips OSM/Overture objects (terrain-only).
     pub fn skip_objects(&self) -> bool {
         self.mode.skip_objects()
+    }
+
+    /// Fixed vertical datum `(elevation_base_m, blocks_per_meter)` for region bakes,
+    /// so the same real elevation maps to the same Y in every region. `None` outside
+    /// bake mode keeps the adaptive per-run scaling used for full-world generation.
+    pub fn vertical_datum(&self) -> Option<(f64, f64)> {
+        if self.bake_region.is_some() {
+            Some((
+                self.elevation_base.unwrap_or(0.0),
+                self.vertical_scale.unwrap_or(self.scale),
+            ))
+        } else {
+            None
+        }
     }
 }
 

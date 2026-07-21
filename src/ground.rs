@@ -173,6 +173,7 @@ impl Ground {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub fn new_enabled(
         bbox: &LLBBox,
         scale: f64,
@@ -181,6 +182,7 @@ impl Ground {
         extended_max_y: i32,
         aws_only_elevation: bool,
         benchmark: bool,
+        vertical_datum: Option<(f64, f64)>,
     ) -> Self {
         let mut bench = crate::bench::Bench::new(benchmark);
         // Fetch land cover FIRST so we can feed it into the elevation
@@ -223,6 +225,7 @@ impl Ground {
             land_cover.as_mut(),
             source_mode,
             benchmark,
+            vertical_datum,
         ) {
             Ok(elevation_data) => {
                 let lat = (bbox.min().lat() + bbox.max().lat()) / 2.0;
@@ -776,6 +779,7 @@ pub fn generate_ground_data(args: &Args) -> Ground {
             extended_max_y_for(args),
             args.aws_only_elevation,
             args.benchmark,
+            args.vertical_datum(),
         );
         if args.debug {
             ground.save_debug_image("elevation_debug");
