@@ -102,9 +102,10 @@ public final class RegionBaker {
             // to a single actionable line rather than a stack trace — this is the
             // expected first-run state until 'arnis-binary' is configured.
             String detail = "Could not run the arnis executable '" + config.arnisBinary
-                    + "': " + e.getMessage()
-                    + ". Set 'arnis-binary' in the plugin config to the absolute path of"
-                    + " the arnis executable and restart (see SERVER_SETUP.md).";
+                    + "' (from 'arnis-binary: " + config.arnisBinaryConfigured + "'): " + e.getMessage()
+                    + ". Point 'arnis-binary' in the plugin config at the arnis executable"
+                    + " — a path relative to the server directory or an enclosing checkout works"
+                    + " — and restart (see SERVER_SETUP.md).";
             plugin.getLogger().warning(detail);
             return new Result(false, detail);
         } catch (InterruptedException e) {

@@ -41,6 +41,9 @@ This project is open source and welcomes contributions from everyone! Whether yo
 Command line Build: ```cargo run --release --no-default-features -- --output-dir="C:/YOUR_PATH/.minecraft/saves/worldname" --bbox="min_lat,min_lng,max_lat,max_lng"```<br>
 GUI Build: ```cargo run --release```<br>
 
+Full build instructions for both the engine and the Paper plugin, on Windows and on
+Linux, are in [BUILDING.md](./BUILDING.md).
+
 `--mode` selects what gets generated, mirroring the GUI's generation mode dropdown:
 
 | Mode | Result |

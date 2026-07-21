@@ -34,7 +34,7 @@ public final class ArnisPlugin extends JavaPlugin {
     @Override
     public void onLoad() {
         saveDefaultConfig();
-        config = ArnisConfig.from(getConfig());
+        config = ArnisConfig.from(getConfig(), getDataFolder());
         // Bake the spawn area here, before the server loads its worlds. Then the
         // server reads real terrain from disk instead of generating void there, and
         // arnis never overwrites a region file the server already has open (which it
@@ -108,17 +108,21 @@ public final class ArnisPlugin extends JavaPlugin {
     public void onEnable() {
         if (config == null) { // normally set in onLoad
             saveDefaultConfig();
-            config = ArnisConfig.from(getConfig());
+            config = ArnisConfig.from(getConfig(), getDataFolder());
         }
         baker = new RegionBaker(this, config);
         bakeService = new BakeService(this, baker, config.workers);
 
         getLogger().info("Enabling: origin " + config.originLat + "," + config.originLng
-                + " -> MC (0,0), scale " + config.scale + " blocks/m, arnis '" + config.arnisBinary + "'");
+                + " -> MC (0,0), scale " + config.scale + " blocks/m, arnis " + config.arnisBinaryNote);
 
         PluginCommand command = getCommand("arnis");
         if (command != null) {
-            command.setExecutor(new ArnisCommand(this));
+            // Both, deliberately: setExecutor does not register the tab completer, and
+            // without one Bukkit completes online player names instead of subcommands.
+            ArnisCommand handler = new ArnisCommand(this);
+            command.setExecutor(handler);
+            command.setTabCompleter(handler);
         } else {
             getLogger().severe("Command 'arnis' is not defined in plugin.yml.");
         }
@@ -146,22 +150,24 @@ public final class ArnisPlugin extends JavaPlugin {
         }
         getLogger().info("Arnis world '" + config.worldName + "' ready.");
 
-        // Don't keep spawn chunks resident. Otherwise the server holds the void
-        // spawn chunks it generated at startup and saves them back over the region
-        // arnis bakes there — leaving a void hole at spawn while everything else
-        // (baked ahead of players, never resident as void) is fine. With this off,
-        // the baked spawn region survives and loads from disk on demand.
-        arnisWorld.setGameRule(GameRule.SPAWN_CHUNK_RADIUS, 0);
+        releaseSpawnChunks(arnisWorld);
 
         bakeService.initFromDisk(arnisWorld.getWorldFolder());
 
         // If the arnis binary is a path that doesn't exist, don't even try to bake:
         // warn once with an actionable message and leave the world void until it's set.
         if (!arnisBinaryConfigured()) {
-            getLogger().warning("arnis executable '" + config.arnisBinary + "' was not found. "
-                    + "Terrain baking is disabled until you set 'arnis-binary' to the absolute "
-                    + "path of the arnis executable in plugins/" + getName()
-                    + "/config.yml and restart the server (see SERVER_SETUP.md).");
+            if (config.arnisBinaryFound) {
+                getLogger().warning("arnis executable '" + config.arnisBinary + "' is not marked "
+                        + "executable, so terrain baking is disabled. Run: chmod +x '"
+                        + config.arnisBinary + "' and restart the server.");
+            } else {
+                getLogger().warning("arnis executable " + config.arnisBinaryNote + ", so terrain "
+                        + "baking is disabled. Point 'arnis-binary' in plugins/" + getName()
+                        + "/config.yml at the arnis executable — a path relative to the server "
+                        + "directory or an enclosing checkout works, e.g. 'target/release/arnis' — "
+                        + "then restart the server (see SERVER_SETUP.md).");
+            }
             return;
         }
 
@@ -178,16 +184,58 @@ public final class ArnisPlugin extends JavaPlugin {
     }
 
     /**
-     * Whether the configured arnis binary looks usable. A path is checked for
-     * existence; a bare command name is assumed resolvable via PATH (a failed run
-     * then reports a clear message from {@link RegionBaker}). This only suppresses
-     * baking for the unambiguous "path given but missing" case, so it never
-     * disables a working setup by mistake.
+     * Stops the server keeping the world's spawn chunks resident.
+     *
+     * <p>Otherwise the server holds the void spawn chunks it generated at startup and
+     * saves them back over the region arnis bakes there — leaving a void hole at spawn,
+     * while everything else (baked ahead of players, never resident as void) is fine.
+     *
+     * <p>The mechanism differs across server versions, and referencing the wrong one
+     * directly throws {@link NoSuchFieldError} / {@link NoSuchMethodError} at the call
+     * site — which previously aborted world setup before baking ever started. So the
+     * game rule is looked up by name, the older API is reached reflectively, and every
+     * failure is contained here: a spawn that needs one `/arnis rebake` is a far better
+     * outcome than a generator that never runs.
+     */
+    private void releaseSpawnChunks(World world) {
+        // 1.20.5+: the spawnChunkRadius game rule. Resolved by name because the
+        // GameRule constant for it is not present on every server build.
+        try {
+            GameRule<?> rule = GameRule.getByName("spawnChunkRadius");
+            if (rule != null && Integer.class.equals(rule.getType())) {
+                @SuppressWarnings("unchecked")
+                GameRule<Integer> radius = (GameRule<Integer>) rule;
+                if (world.setGameRule(radius, 0)) {
+                    return;
+                }
+            }
+        } catch (Throwable t) {
+            getLogger().fine("spawnChunkRadius game rule unavailable: " + t);
+        }
+
+        // Pre-1.20.5: the equivalent World method, deprecated and eventually removed —
+        // called reflectively so this compiles and runs against either API.
+        try {
+            World.class.getMethod("setKeepSpawnInMemory", boolean.class).invoke(world, false);
+            return;
+        } catch (Throwable t) {
+            getLogger().fine("setKeepSpawnInMemory unavailable: " + t);
+        }
+
+        getLogger().warning("Could not stop the server keeping spawn chunks loaded on this "
+                + "server version. Terrain streamed to players is unaffected, but the spawn "
+                + "region may come up as a void hole — fix it with '/arnis rebake' and a "
+                + "restart, or move spawn with the 'spawn' setting in config.yml.");
+    }
+
+    /**
+     * Whether the arnis binary was located — as an absolute path, relative to the
+     * server or the enclosing checkout, or on {@code PATH} (see {@link ArnisBinary}).
+     * When it wasn't, baking is suppressed and the reason is logged once rather than
+     * failing per region.
      */
     private boolean arnisBinaryConfigured() {
-        String bin = config.arnisBinary;
-        boolean looksLikePath = bin.contains("/") || bin.contains("\\");
-        return !looksLikePath || new File(bin).isFile();
+        return config.arnisBinaryFound && !ArnisBinary.needsExecutableBit(config.arnisBinary);
     }
 
     @Override

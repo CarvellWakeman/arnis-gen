@@ -2,6 +2,8 @@ package com.arnis.paper;
 
 import org.bukkit.configuration.file.FileConfiguration;
 
+import java.io.File;
+
 /**
  * Immutable snapshot of the plugin configuration (see {@code config.yml}).
  *
@@ -16,7 +18,14 @@ public final class ArnisConfig {
     public final double scale;
     public final int bakeMargin;
     public final int groundLevel;
+    /** The command actually run — the configured value resolved to a path where possible. */
     public final String arnisBinary;
+    /** The raw {@code arnis-binary} config value, for messages that should echo the config. */
+    public final String arnisBinaryConfigured;
+    /** Whether an executable was located; false disables baking with an actionable warning. */
+    public final boolean arnisBinaryFound;
+    /** How {@link #arnisBinary} was arrived at, for the startup log. */
+    public final String arnisBinaryNote;
     public final boolean bakeSpawnOnEnable;
     public final int spawnX;
     public final int spawnZ;
@@ -39,7 +48,8 @@ public final class ArnisConfig {
             double scale,
             int bakeMargin,
             int groundLevel,
-            String arnisBinary,
+            String arnisBinaryConfigured,
+            ArnisBinary.Resolved arnisBinary,
             boolean bakeSpawnOnEnable,
             int spawnX,
             int spawnZ,
@@ -56,7 +66,10 @@ public final class ArnisConfig {
         this.scale = scale;
         this.bakeMargin = bakeMargin;
         this.groundLevel = groundLevel;
-        this.arnisBinary = arnisBinary;
+        this.arnisBinary = arnisBinary.command;
+        this.arnisBinaryConfigured = arnisBinaryConfigured;
+        this.arnisBinaryFound = arnisBinary.found;
+        this.arnisBinaryNote = arnisBinary.note;
         this.bakeSpawnOnEnable = bakeSpawnOnEnable;
         this.spawnX = spawnX;
         this.spawnZ = spawnZ;
@@ -69,9 +82,15 @@ public final class ArnisConfig {
         this.maxPerScan = maxPerScan;
     }
 
-    /** Reads an {@link ArnisConfig} from a Bukkit {@link FileConfiguration}. */
-    public static ArnisConfig from(FileConfiguration c) {
+    /**
+     * Reads an {@link ArnisConfig} from a Bukkit {@link FileConfiguration}.
+     *
+     * @param dataFolder the plugin data folder, used to resolve a relative
+     *                   {@code arnis-binary} (see {@link ArnisBinary})
+     */
+    public static ArnisConfig from(FileConfiguration c, File dataFolder) {
         double scale = c.getDouble("scale", 1.0);
+        String binary = c.getString("arnis-binary", "arnis");
         return new ArnisConfig(
                 c.getString("world", "arnis"),
                 c.getDouble("origin.lat", 0.0),
@@ -79,7 +98,8 @@ public final class ArnisConfig {
                 scale,
                 c.getInt("bake-margin", 64),
                 c.getInt("ground-level", -62),
-                c.getString("arnis-binary", "arnis"),
+                binary,
+                ArnisBinary.resolve(binary, dataFolder),
                 c.getBoolean("bake-spawn-on-enable", true),
                 c.getInt("spawn.x", 256),
                 c.getInt("spawn.z", 256),

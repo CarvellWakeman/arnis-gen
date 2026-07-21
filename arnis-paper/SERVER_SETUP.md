@@ -2,7 +2,7 @@
 
 Stream real-world terrain (from OpenStreetMap + elevation + land cover) into a
 [Paper](https://papermc.io/) server, generated on demand as players explore. This
-guide takes you from a fresh checkout to walking around your city in-game.
+guide takes you from a downloaded release to walking around your city in-game.
 
 ---
 
@@ -22,54 +22,69 @@ region shares that frame so the world is one seamless map.
   is untested; older will not load the chunks.
 - **Java 21+** to run Paper (JDK 25 runs it fine, with a couple of harmless startup
   warnings).
-- The **`arnis` binary** built from this repository.
+- The **arnis server bundle** for your platform (Step 1) — one zip containing the
+  engine and the plugin. Nothing has to be compiled, and the engine runs headless, so
+  the host needs no desktop libraries.
 - **Internet access on the server host** — arnis fetches OpenStreetMap (via an
   Overpass proxy), elevation, and land cover while baking. No API keys are required.
 - Disk space for the baked world plus data caches.
 
+On **Linux**, the bundled engine is built against glibc 2.35, so it runs on Debian 12+,
+Ubuntu 22.04+, RHEL 9+ and anything newer. Older distros, Alpine, or a non-x86_64 host
+need a build from source — see [BUILDING.md](https://github.com/CarvellWakeman/arnis-gen/blob/main/BUILDING.md).
+
 ---
 
-## Step 1 — build the arnis engine
+## Step 1 — download the bundle
 
-From the repository root:
+Grab the zip for your server's platform from the
+[latest release](https://github.com/CarvellWakeman/arnis-gen/releases/latest):
 
-```
-cargo build --release
-```
+| Server host | File |
+|---|---|
+| Linux (x86_64) | `arnis-server-linux-x86_64.zip` |
+| Windows (x86_64) | `arnis-server-windows-x86_64.zip` |
 
-This produces the binary at `target/release/arnis.exe` (Windows) or
-`target/release/arnis`. **Note its absolute path** — you'll point the plugin at it.
+Unzip it anywhere. Inside:
 
-> A `target/debug/arnis` build works too, but release is much faster per region.
+| File | What it is |
+|---|---|
+| `arnis` / `arnis.exe` | the engine — generates the terrain |
+| `arnis-paper-<version>.jar` | the Paper plugin |
+| `SERVER_SETUP.md` | this guide |
+| `config.example.yml` | a fully commented copy of the default config |
 
-## Step 2 — build the plugin jar
+> Prefer to build it yourself, or need a platform the bundles don't cover?
+> [BUILDING.md](https://github.com/CarvellWakeman/arnis-gen/blob/main/BUILDING.md) covers both artifacts on Windows and on Linux.
 
-With Gradle:
-
-```
-cd arnis-paper
-gradle build      # or: gradle wrapper && ./gradlew build
-```
-
-The jar lands at `arnis-paper/build/libs/arnis-paper-0.1.0.jar`.
-
-**No Gradle installed?** Run the end-to-end test once from the repo root:
-
-```
-pwsh -File e2e/smoke_test.ps1
-```
-
-It compiles the plugin as a side effect to
-`e2e/.cache/plugin-build/arnis-paper.jar` — copy that jar.
-
-## Step 3 — set up the Paper server
+## Step 2 — set up the Paper server
 
 1. Put `paper-1.21.1.jar` in an empty server folder (download from
    <https://papermc.io/downloads/paper>).
 2. Create `eula.txt` containing `eula=true` (agrees to the Mojang EULA).
-3. Copy the plugin jar into `plugins/`.
-4. Start the server once, then stop it (type `stop`). This generates
-   `plugins/ArnisGen/config.yml`.
+3. Copy `arnis-paper-<version>.jar` from the bundle into `plugins/`.
+4. Copy the **engine** (`arnis` / `arnis.exe`) into the server folder itself, or into a
+   `bin/` subfolder of it — either location is found automatically, so the default
+   `arnis-binary: "arnis"` needs no editing. (Any other location works too; see
+   [How `arnis-binary` is found](#how-arnis-binary-is-found).)
+5. **On Linux/macOS, make the engine executable:** `chmod +x arnis`. Extracting a zip
+   with a GUI tool, or copying the file over SFTP or through a hosting panel's file
+   manager, usually drops the executable bit. If it's missing, the plugin says so at
+   startup and prints the exact command to run.
+6. Start the server once with the command below, then stop it (type `stop`). This
+   generates `plugins/ArnisGen/config.yml`.
+
+The server folder then looks like this:
+
+```
+server/
+├── paper-1.21.1.jar
+├── eula.txt
+├── arnis                    (or bin/arnis, or arnis.exe on Windows)
+└── plugins/
+    ├── arnis-paper-1.0.0.jar
+    └── ArnisGen/config.yml  (created by that first start)
+```
 
 Start the server from the server folder with:
 
@@ -82,7 +97,7 @@ runs it headless in the terminal; omit it to get Paper's small GUI window. On
 Windows, use the JDK you installed (e.g. `"%JAVA_HOME%\bin\java.exe" -Xmx2G -jar
 paper-1.21.1.jar --nogui`) if `java` isn't on your `PATH`.
 
-## Step 4 — configure `plugins/ArnisGen/config.yml`
+## Step 3 — configure `plugins/ArnisGen/config.yml`
 
 ```yaml
 world: arnis                 # the generated world's name
@@ -92,7 +107,7 @@ origin:
 scale: 1.0                   # blocks per meter (1.0 = 1:1)
 bake-margin: 64              # cross-boundary context; leave as-is
 ground-level: -62            # matches arnis; leave as-is
-arnis-binary: "arnis"        # <-- SET THIS to the ABSOLUTE path from Step 1
+arnis-binary: "arnis"        # the engine from the bundle; see below for how it's found
 bake-spawn-on-enable: true   # bake the spawn area on startup
 spawn:                       # keep near a region CENTRE (multiple of 512, +~256)
   x: 256                     # so only one region is pre-baked at first start
@@ -107,13 +122,34 @@ streaming:
   max-per-scan: 8
 ```
 
-The one setting you **must** change is `arnis-binary` — use the **absolute** path,
-e.g. `arnis-binary: 'C:\Users\you\arnis-gen\target\release\arnis.exe'`. A relative
-path resolves against the server's working directory and usually won't be found.
-
 Set `origin` to wherever you want your world centered.
 
-## Step 5 — start, and enter your world
+### How `arnis-binary` is found
+
+An absolute path (e.g. `/srv/minecraft/arnis` or `'C:\minecraft\arnis.exe'`) is used
+as given. Anything else is searched for, in this order:
+
+1. the plugin folder (`plugins/ArnisGen/`) and its parents — which covers `plugins/`,
+   the server directory, and up to five levels above it;
+2. within each of those, `target/release/`, `target/debug/` and `bin/`;
+3. `PATH`.
+
+So the default `arnis-binary: "arnis"` needs no editing when the engine sits in the
+server folder, in `bin/`, or next to the config in `plugins/ArnisGen/`. A server
+folder inside a source checkout finds `target/release/arnis` by itself, too.
+
+The `.exe` suffix is added on Windows and dropped elsewhere, so one config file serves
+both platforms — handy when you develop on Windows and deploy to Linux. If a
+configured path is missing (a moved install, or a config copied from another machine)
+the same search runs on its file name as a fallback.
+
+The startup log states what was resolved, and `/arnis status` shows it in game:
+
+```
+[ArnisGen] Enabling: origin 51.515,-0.115 -> MC (0,0), scale 1.0 blocks/m, arnis 'arnis' -> /srv/minecraft/bin/arnis
+```
+
+## Step 4 — start, and enter your world
 
 1. Start the server. On the **first** start the plugin pre-bakes the spawn region
    *before* the world loads, so **startup pauses ~30–60 s** (network fetch + render)
@@ -166,6 +202,78 @@ startup ~30–60 s — watch for `[ArnisGen] Spawn region pre-baked.`
 
 ---
 
+## Optional: running under Pterodactyl (or Pelican)
+
+Nothing in the plugin is panel-specific, but a panel-managed server runs inside a
+Docker container, which changes three things: the server runs as a **non-root user**,
+only **`/home/container`** is writable and persistent, and there is **no `apt` or
+`sudo`** inside. So install the release bundle — do not try to build anything there.
+
+**Compatibility.** The Paper eggs run on the Debian-based `yolks:java_*` images
+(glibc 2.36+), so the released Linux bundle runs as-is. An Alpine-based image needs a
+static musl build instead — see [BUILDING.md](https://github.com/CarvellWakeman/arnis-gen/blob/main/BUILDING.md).
+
+### Installing
+
+`/home/container` is both the server directory and the JVM's working directory, so
+the layout from Step 2 applies unchanged, with the engine in `bin/`:
+
+```
+/home/container/
+├── paper-1.21.1.jar
+├── bin/arnis
+└── plugins/
+    ├── arnis-paper-1.0.0.jar
+    └── ArnisGen/config.yml
+```
+
+Because `bin/` is one of the searched locations, the default `arnis-binary: "arnis"`
+still needs no editing.
+
+1. Upload `arnis-server-linux-x86_64.zip` with the panel's **file manager**, then use
+   its **Unarchive** action and move the engine and the jar into place. (Unpacking
+   server-side is also much faster than uploading the engine binary over SFTP — it is
+   by far the largest file.) Delete the zip afterwards so it doesn't count against
+   your disk quota.
+2. **Make the engine executable.** The web file manager cannot change permissions, and
+   an upload lands as `644`. In rough order of convenience:
+   - your SFTP client's chmod, using the panel's SFTP credentials —
+     `chmod +x bin/arnis` in the `sftp` CLI, or the permissions dialog in FileZilla;
+   - from the node host, if you administer it:
+     `docker exec -it <server-uuid> chmod +x /home/container/bin/arnis`;
+   - unarchiving a **`.tar.gz`** instead of a zip, which reliably carries the mode
+     through — build one with
+     `tar -czf arnis.tar.gz bin/arnis` (see "Assembling a bundle yourself" in
+     [BUILDING.md](https://github.com/CarvellWakeman/arnis-gen/blob/main/BUILDING.md)).
+3. Start the server and check the console: `[ArnisGen] Enabling: ... arnis 'arnis' ->
+   /home/container/bin/arnis`. If the bit is still missing, the plugin logs the exact
+   `chmod` to run rather than failing on every region.
+
+### Tuning for a container
+
+The engine runs as a subprocess of the JVM, which means it shares the container's
+resource limits. Three things follow:
+
+- **Leave memory headroom.** The engine's memory counts against the *server's* limit
+  because it lives in the same cgroup — and most Paper eggs start Java with
+  `-XX:MaxRAMPercentage=95` or `-Xmx` set to nearly the whole allocation, leaving
+  none. When the limit is hit the kernel OOM-kills the largest process, which is your
+  server. Lower the startup command to roughly `-XX:MaxRAMPercentage=70` (or an
+  explicit `-Xmx` a couple of GB below the allocation) and give the container enough
+  memory that the remainder is a real budget.
+- **Keep `workers` low.** Each concurrent bake uses a CPU core, and the panel's CPU
+  limit throttles the whole container — Paper included — so an aggressive setting
+  costs you TPS. Start at `workers: 2` and raise it only while watching the panel's
+  resource graphs.
+- **Watch the disk quota.** Baked regions are ~4–5 MB each and `prefetch-radius: 2`
+  is 25 regions per player (~115 MB) before anyone explores far. Panels enforce the
+  disk limit hard, and the baked world only grows.
+
+Outbound HTTPS must be allowed for the engine to fetch map data; the stock images
+include the CA certificates it reads from the OS trust store.
+
+---
+
 ## Commands
 
 All require the `arnis.admin` permission (op by default).
@@ -182,8 +290,10 @@ All require the `arnis.admin` permission (op by default).
 
 ## Gotchas & tuning
 
-- **`arnis-binary` must be an absolute path.** This is the most common setup mistake.
-  Verify the binary runs on its own first: `arnis --help`.
+- **Check the binary the plugin picked.** The startup log and `/arnis status` print the
+  resolved path; if it says `NOT FOUND`, baking is disabled and nothing else will work.
+  Verify the engine runs on its own first: `./arnis --version`. On Linux, a binary that
+  exists but isn't marked executable is reported with the `chmod +x` to run.
 - **First visit to an area is slow** (network fetch + render). Adjacent areas are
   fast — arnis caches OSM/elevation/land-cover tiles, so once a ~2 km tile is fetched,
   every nearby region reuses it.
@@ -244,7 +354,10 @@ All require the `arnis.admin` permission (op by default).
   region file exists and every later bake skips it. `/arnis rebake 1` (standing near the
   seam) regenerates it; restart if it still looks void afterwards.
 - **`Command 'arnis' is not defined`.** The plugin jar didn't load — check the server
-  log for a load error and that the jar is a proper build (Steps 2).
+  log for a load error, and that the jar from the bundle is in `plugins/` (Step 2).
+- **`GLIBC_2.xx not found` when the engine runs.** The binary was built against a newer
+  glibc than the host has. Use the released Linux bundle, or build on (or for) the older
+  system — see the glibc notes in [BUILDING.md](https://github.com/CarvellWakeman/arnis-gen/blob/main/BUILDING.md).
 
 ---
 

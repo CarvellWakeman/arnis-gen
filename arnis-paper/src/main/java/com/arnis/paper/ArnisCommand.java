@@ -3,13 +3,15 @@ package com.arnis.paper;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.command.Command;
-import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.command.TabExecutor;
 import org.bukkit.entity.Player;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * The {@code /arnis} admin command.
@@ -26,10 +28,16 @@ import java.util.List;
  *       even ones already on disk (repairs void or stale terrain).
  * </ul>
  */
-public final class ArnisCommand implements CommandExecutor {
+public final class ArnisCommand implements TabExecutor {
 
     private static final String USAGE = "Usage: /arnis <status|prewarm [radius]"
             + "|goto <lat> <lng>|reload [radius]|rebake [radius]>";
+
+    private static final List<String> SUBCOMMANDS =
+            List.of("status", "prewarm", "goto", "reload", "rebake");
+
+    /** Suggested radii — small values, since each region is a bake. */
+    private static final List<String> RADII = List.of("1", "2", "3");
 
     private final ArnisPlugin plugin;
 
@@ -60,6 +68,53 @@ public final class ArnisCommand implements CommandExecutor {
         }
     }
 
+    /**
+     * Completions for {@code /arnis}: the subcommands, then per-subcommand arguments.
+     *
+     * <p>{@code goto} is offered the configured origin, so tabbing through it produces
+     * a coordinate that is guaranteed to be in range — the common case for a first
+     * visit, and a reminder of where the world is anchored.
+     *
+     * <p>Returns an empty list rather than {@code null} where nothing fits: {@code null}
+     * makes Bukkit fall back to completing online player names, which is never useful
+     * here.
+     */
+    @Override
+    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        if (args.length <= 1) {
+            return matching(args.length == 0 ? "" : args[0], SUBCOMMANDS);
+        }
+        switch (args[0].toLowerCase(Locale.ROOT)) {
+            case "prewarm":
+            case "reload":
+            case "rebake":
+                return args.length == 2 ? matching(args[1], RADII) : List.of();
+            case "goto":
+                ArnisConfig c = plugin.config();
+                if (args.length == 2) {
+                    return matching(args[1], List.of(String.valueOf(c.originLat)));
+                }
+                if (args.length == 3) {
+                    return matching(args[2], List.of(String.valueOf(c.originLng)));
+                }
+                return List.of();
+            default:
+                return List.of();
+        }
+    }
+
+    /** The options starting with {@code prefix}, case-insensitively. */
+    private static List<String> matching(String prefix, List<String> options) {
+        String p = prefix.toLowerCase(Locale.ROOT);
+        List<String> out = new ArrayList<>(options.size());
+        for (String option : options) {
+            if (option.toLowerCase(Locale.ROOT).startsWith(p)) {
+                out.add(option);
+            }
+        }
+        return out;
+    }
+
     private boolean status(CommandSender sender) {
         ArnisConfig c = plugin.config();
         World world = plugin.arnisWorld();
@@ -78,7 +133,8 @@ public final class ArnisCommand implements CommandExecutor {
                     + ", ok: " + svc.completedCount()
                     + ", failed: " + svc.failedCount() + ")");
         }
-        sender.sendMessage("  arnis binary: " + c.arnisBinary);
+        sender.sendMessage("  arnis binary: " + c.arnisBinaryNote
+                + (c.arnisBinaryFound ? "" : " [NOT FOUND - baking disabled]"));
         return true;
     }
 

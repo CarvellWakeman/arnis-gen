@@ -12,9 +12,9 @@ See [`../worldgen-docs/roadmap.md`](../worldgen-docs/roadmap.md) for design and 
 
 ## Requirements
 
-- A built `arnis` binary with `--bake-region` support (this repo, Phase 0).
+- An `arnis` binary with `--bake-region` support (this repo, Phase 0).
 - Paper **1.21.1** (matches the chunk data version arnis writes).
-- JDK 21+ to build.
+- JDK 21+ and Gradle 8.5+ to build.
 
 ## Build
 
@@ -22,14 +22,21 @@ See [`../worldgen-docs/roadmap.md`](../worldgen-docs/roadmap.md) for design and 
 gradle build          # or: ./gradlew build after `gradle wrapper`
 ```
 
-The plugin jar lands in `build/libs/arnis-paper-0.1.0.jar`.
+The plugin jar lands in `build/libs/arnis-paper-1.0.0.jar`. See
+[`../BUILDING.md`](../BUILDING.md) for prerequisites on Windows and Linux, and for
+building the engine. Prebuilt bundles of both are attached to each
+[release](https://github.com/CarvellWakeman/arnis-gen/releases/latest).
 
 ## Install & configure
 
 1. Drop the jar into your server's `plugins/` folder and start once to generate
    `plugins/ArnisGen/config.yml`.
 2. Edit `config.yml`:
-   - `arnis-binary`: absolute path to the `arnis` executable.
+   - `arnis-binary`: path to the `arnis` executable. An absolute path always works;
+     a relative one (or the bare name `arnis`) is looked for in the server directory
+     and its parents — including their `bin/`, `target/release/` and `target/debug/`
+     subfolders — and then on `PATH`, with the `.exe` suffix added or dropped to suit
+     the host OS.
    - `origin.lat` / `origin.lng`: the real-world point that maps to Minecraft `(0,0)`.
    - `scale`, `bake-margin`, `ground-level`, `spawn`, `world` as needed.
 3. Restart. On enable the plugin creates the `arnis` world with a void generator and

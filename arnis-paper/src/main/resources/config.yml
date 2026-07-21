@@ -30,8 +30,12 @@ vertical-scale: 1.0
 # set this near that area's base elevation so terrain isn't buried under deep stone.
 elevation-base: 0.0
 
-# Path to the arnis executable (the Rust binary). Use an absolute path unless it
-# is on the server process's PATH.
+# Path to the arnis executable (the Rust binary). An absolute path always works.
+# Anything else is searched for, in order, under: this plugin folder, the server
+# directory and its parents (so a server inside the arnis checkout finds
+# target/release/arnis), and finally PATH. `.exe` is added on Windows and dropped
+# elsewhere, so the same config works on either OS. The default below finds a
+# release or debug build of an enclosing checkout without any editing.
 arnis-binary: "arnis"
 
 # Bake the spawn region when the plugin first enables so spawn has real terrain.
