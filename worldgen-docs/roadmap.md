@@ -28,6 +28,11 @@ just the scannable checklist of deliverables.
   independent bakes stay aligned.
 - [x] **Machine-readable output** — emit JSON to stdout (`ARNIS_BAKE_RESULT`) for the
   plugin to parse.
+- [x] **Fixed vertical datum** — `scale_to_minecraft` normalized elevation to each
+  bake's own min/max, faulting adjacent regions vertically. Bake mode now uses a shared
+  `--elevation-base` + `--vertical-scale` (`Y = ground_level + (elev - base) * bpm`), so
+  the same real elevation is the same Y everywhere. The vertical analog of the fixed
+  origin; exposed as plugin `vertical-scale` / `elevation-base` config.
 - [x] **Global data caching** — land cover and elevation were already tile-cached;
   added a tiled on-disk OSM cache (`src/osm_cache.rs`, `arnis-osm-cache`) that fetches
   whole geographic grid tiles once and merges covering tiles per region, so adjacent

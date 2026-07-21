@@ -21,6 +21,15 @@ bake-margin: 64
 # Ground-level offset passed to arnis (matches arnis's --ground-level).
 ground-level: -62
 
+# --- Vertical mapping (shared by every region so they line up vertically) ---
+# Minecraft blocks per real-world metre of elevation. Defaults to `scale` (1:1 at
+# scale 1). Raise for more dramatic relief, lower to flatten.
+vertical-scale: 1.0
+# Real-world elevation (metres) that maps to `ground-level`. 0 = sea level, which
+# suits low/coastal areas (land sits above ground level). For a high-altitude area,
+# set this near that area's base elevation so terrain isn't buried under deep stone.
+elevation-base: 0.0
+
 # Path to the arnis executable (the Rust binary). Use an absolute path unless it
 # is on the server process's PATH.
 arnis-binary: "arnis"

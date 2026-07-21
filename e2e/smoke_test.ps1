@@ -175,8 +175,10 @@ ground-level: -62
 arnis-binary: '$arnisYamlPath'
 bake-spawn-on-enable: true
 spawn:
-  x: 8
-  z: 8
+  x: 256
+  z: 256
+vertical-scale: 1.0
+elevation-base: 0.0
 "@ | Set-Content -Path (Join-Path $RunDir "plugins\ArnisGen\config.yml") -Encoding UTF8
 
 # --- 6. Run the server, watch for the bake, then stop ----------------------------

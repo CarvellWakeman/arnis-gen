@@ -21,6 +21,10 @@ public final class ArnisConfig {
     public final int spawnX;
     public final int spawnZ;
 
+    // Vertical mapping (shared across bakes so regions line up vertically).
+    public final double verticalScale;
+    public final double elevationBase;
+
     // Automatic streaming (Phase 2).
     public final boolean streamingEnabled;
     public final int prefetchRadius;
@@ -39,6 +43,8 @@ public final class ArnisConfig {
             boolean bakeSpawnOnEnable,
             int spawnX,
             int spawnZ,
+            double verticalScale,
+            double elevationBase,
             boolean streamingEnabled,
             int prefetchRadius,
             int workers,
@@ -54,6 +60,8 @@ public final class ArnisConfig {
         this.bakeSpawnOnEnable = bakeSpawnOnEnable;
         this.spawnX = spawnX;
         this.spawnZ = spawnZ;
+        this.verticalScale = verticalScale;
+        this.elevationBase = elevationBase;
         this.streamingEnabled = streamingEnabled;
         this.prefetchRadius = prefetchRadius;
         this.workers = workers;
@@ -63,17 +71,20 @@ public final class ArnisConfig {
 
     /** Reads an {@link ArnisConfig} from a Bukkit {@link FileConfiguration}. */
     public static ArnisConfig from(FileConfiguration c) {
+        double scale = c.getDouble("scale", 1.0);
         return new ArnisConfig(
                 c.getString("world", "arnis"),
                 c.getDouble("origin.lat", 0.0),
                 c.getDouble("origin.lng", 0.0),
-                c.getDouble("scale", 1.0),
+                scale,
                 c.getInt("bake-margin", 64),
                 c.getInt("ground-level", -62),
                 c.getString("arnis-binary", "arnis"),
                 c.getBoolean("bake-spawn-on-enable", true),
                 c.getInt("spawn.x", 256),
                 c.getInt("spawn.z", 256),
+                c.getDouble("vertical-scale", scale),
+                c.getDouble("elevation-base", 0.0),
                 c.getBoolean("streaming.enabled", true),
                 Math.max(0, c.getInt("streaming.prefetch-radius", 2)),
                 Math.max(1, c.getInt("streaming.workers", 2)),

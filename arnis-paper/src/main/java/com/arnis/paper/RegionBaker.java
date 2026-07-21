@@ -59,6 +59,11 @@ public final class RegionBaker {
         cmd.add(Integer.toString(config.bakeMargin));
         cmd.add("--ground-level");
         cmd.add(Integer.toString(config.groundLevel));
+        // Shared vertical mapping so regions line up vertically.
+        cmd.add("--vertical-scale");
+        cmd.add(Double.toString(config.verticalScale));
+        cmd.add("--elevation-base");
+        cmd.add(Double.toString(config.elevationBase));
 
         plugin.getLogger().info("Baking region " + rx + "," + rz + "...");
         long start = System.currentTimeMillis();

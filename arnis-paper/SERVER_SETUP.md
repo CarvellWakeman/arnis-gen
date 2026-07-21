@@ -97,6 +97,8 @@ bake-spawn-on-enable: true   # bake the spawn area on startup
 spawn:                       # keep near a region CENTRE (multiple of 512, +~256)
   x: 256                     # so only one region is pre-baked at first start
   z: 256
+vertical-scale: 1.0          # blocks per metre of elevation (shared by all regions)
+elevation-base: 0.0          # real-world metres that map to ground-level (0 = sea level)
 streaming:
   enabled: true
   prefetch-radius: 2         # regions baked ahead of each player (1 region = 512 blocks)
@@ -200,6 +202,14 @@ All require the `arnis.admin` permission (op by default).
   not refresh until those chunks reload (walk away and back, or reconnect).
 - **World height:** arnis targets the vanilla range with `ground-level -62`. Leave the
   defaults unless you have a reason to change them.
+- **Vertical mapping (regions lining up):** every region shares one datum so the same
+  real elevation is the same Y everywhere — that's why adjacent regions don't fault
+  vertically. `elevation-base` is the metres that map to `ground-level` (0 = sea level;
+  good for low/coastal areas) and `vertical-scale` is blocks per metre. If your area is
+  **high-altitude** (e.g. a mountain city), sea-level base buries terrain under deep
+  stone — set `elevation-base` near that area's base elevation. Raising `vertical-scale`
+  exaggerates relief; lowering it flattens. Changing either invalidates already-baked
+  regions (re-bake by deleting the world), like changing the origin.
 - **Be considerate of data sources.** Heavy, wide-ranging exploration makes many
   Overpass/elevation requests. The caches reduce this, but don't point a public server
   at unlimited exploration without thinking about load.
