@@ -40,6 +40,13 @@ public final class ArnisConfig {
     public final int workers;
     public final int intervalTicks;
     public final int maxPerScan;
+    /** Re-bake regions the server generated itself when a player outran streaming. */
+    public final boolean repairUnbaked;
+    public final int maxRepairsPerScan;
+    /** Hold players at the edge of baked terrain rather than letting them outrun it. */
+    public final boolean barrier;
+    /** Seconds of travel to keep baked ahead of a moving player; 0 disables prediction. */
+    public final double leadSeconds;
 
     private ArnisConfig(
             String worldName,
@@ -59,7 +66,11 @@ public final class ArnisConfig {
             int prefetchRadius,
             int workers,
             int intervalTicks,
-            int maxPerScan) {
+            int maxPerScan,
+            boolean repairUnbaked,
+            int maxRepairsPerScan,
+            boolean barrier,
+            double leadSeconds) {
         this.worldName = worldName;
         this.originLat = originLat;
         this.originLng = originLng;
@@ -80,6 +91,10 @@ public final class ArnisConfig {
         this.workers = workers;
         this.intervalTicks = intervalTicks;
         this.maxPerScan = maxPerScan;
+        this.repairUnbaked = repairUnbaked;
+        this.maxRepairsPerScan = maxRepairsPerScan;
+        this.barrier = barrier;
+        this.leadSeconds = leadSeconds;
     }
 
     /**
@@ -109,6 +124,10 @@ public final class ArnisConfig {
                 Math.max(0, c.getInt("streaming.prefetch-radius", 2)),
                 Math.max(1, c.getInt("streaming.workers", 2)),
                 Math.max(1, c.getInt("streaming.interval-ticks", 40)),
-                Math.max(1, c.getInt("streaming.max-per-scan", 8)));
+                Math.max(1, c.getInt("streaming.max-per-scan", 8)),
+                c.getBoolean("streaming.repair-unbaked", true),
+                Math.max(0, c.getInt("streaming.max-repairs-per-scan", 2)),
+                c.getBoolean("streaming.barrier", true),
+                Math.max(0.0, c.getDouble("streaming.lead-seconds", 60.0)));
     }
 }

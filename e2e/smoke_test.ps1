@@ -132,7 +132,10 @@ if ($javacExit -ne 0) {
 # Stage classes + resources (substituting the version placeholder in plugin.yml).
 Copy-Item (Join-Path $Classes "com") -Destination $Stage -Recurse -Force
 $resDir = Join-Path $RepoRoot "arnis-paper\src\main\resources"
-$pluginYml = (Get-Content (Join-Path $resDir "plugin.yml") -Raw).Replace('${version}', '0.1.0')
+$pluginVersion = ([regex]::Match((Get-Content (Join-Path $RepoRoot "arnis-paper\build.gradle") -Raw),
+    "(?m)^version\s*=\s*'([^']+)'").Groups[1].Value)
+if (-not $pluginVersion) { $pluginVersion = "0.0.0-dev" }
+$pluginYml = (Get-Content (Join-Path $resDir "plugin.yml") -Raw).Replace('${version}', $pluginVersion)
 Set-Content -Path (Join-Path $Stage "plugin.yml") -Value $pluginYml -Encoding UTF8
 Copy-Item (Join-Path $resDir "config.yml") -Destination (Join-Path $Stage "config.yml") -Force
 $PluginJar = Join-Path $Build "arnis-paper.jar"

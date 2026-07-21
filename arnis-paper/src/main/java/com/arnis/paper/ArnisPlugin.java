@@ -69,7 +69,11 @@ public final class ArnisPlugin extends JavaPlugin {
                 + "debug arnis build; use a release build and a region-centered spawn to speed this up)...");
         RegionBaker baker = new RegionBaker(this, config);
         for (int[] r : toBake) {
-            if (!baker.bake(worldFolder, r[0], r[1]).ok) {
+            if (baker.bake(worldFolder, r[0], r[1]).ok) {
+                // Record provenance here too: this path predates the BakeService, and
+                // an unmarked region would be treated as one the server generated.
+                BakedIndex.mark(worldFolder, r[0], r[1]);
+            } else {
                 getLogger().warning("Spawn-area pre-bake failed for region " + r[0] + "," + r[1] + ".");
             }
         }
@@ -150,9 +154,23 @@ public final class ArnisPlugin extends JavaPlugin {
         }
         getLogger().info("Arnis world '" + config.worldName + "' ready.");
 
+        // A world the server loaded before this plugin ran keeps whatever generator it
+        // was created with. If that isn't ours, unbaked area comes up as vanilla
+        // terrain instead of void — solid, plausible-looking, and persisted over the
+        // top of anything arnis bakes there later.
+        if (!(arnisWorld.getGenerator() instanceof VoidChunkGenerator)) {
+            getLogger().warning("World '" + config.worldName + "' is not using the ArnisGen void "
+                    + "generator, so unbaked area will be generated as ordinary Minecraft terrain. "
+                    + "Add it to bukkit.yml:  worlds:\n    " + config.worldName
+                    + ":\n      generator: ArnisGen\nand restart (see SERVER_SETUP.md). Terrain "
+                    + "already generated the wrong way needs '/arnis rebake'.");
+        }
+
         releaseSpawnChunks(arnisWorld);
 
-        bakeService.initFromDisk(arnisWorld.getWorldFolder());
+        bakeService.init(arnisWorld.getWorldFolder());
+        getServer().getPluginManager().registerEvents(
+                new UnbakedRegionWatcher(arnisWorld, bakeService), this);
 
         // If the arnis binary is a path that doesn't exist, don't even try to bake:
         // warn once with an actionable message and leave the world void until it's set.
@@ -175,11 +193,23 @@ public final class ArnisPlugin extends JavaPlugin {
             bakeSpawnRegion();
         }
         if (config.streamingEnabled) {
-            trackerTask = new PlayerTracker(arnisWorld, bakeService, config.prefetchRadius, config.maxPerScan)
+            trackerTask = new PlayerTracker(this, arnisWorld, bakeService, config.prefetchRadius,
+                    config.maxPerScan, config.repairUnbaked ? config.maxRepairsPerScan : 0,
+                    config.leadSeconds, config.intervalTicks)
                     .runTaskTimer(this, config.intervalTicks, config.intervalTicks);
             getLogger().info("Streaming enabled: prefetch radius " + config.prefetchRadius
                     + " region(s), " + config.workers + " worker(s), scan every "
-                    + config.intervalTicks + " ticks.");
+                    + config.intervalTicks + " ticks, repair "
+                    + (config.repairUnbaked ? "on (max " + config.maxRepairsPerScan + "/scan)" : "off")
+                    + ", lookahead " + (config.leadSeconds > 0 ? config.leadSeconds + "s" : "off")
+                    + ", barrier " + (config.barrier ? "on" : "off") + ".");
+
+            // The barrier only makes sense alongside streaming: without something
+            // baking the frontier, it would be a wall that never lifts.
+            if (config.barrier) {
+                getServer().getPluginManager().registerEvents(
+                        new MovementBarrier(this, arnisWorld, bakeService), this);
+            }
         }
     }
 

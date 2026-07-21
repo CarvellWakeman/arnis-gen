@@ -120,6 +120,10 @@ streaming:
   workers: 2                 # concurrent bakes (each uses a CPU core + network)
   interval-ticks: 40         # how often player positions are scanned (20 = 1s)
   max-per-scan: 8
+  repair-unbaked: true       # re-bake regions the server generated before arnis got there
+  max-repairs-per-scan: 2
+  barrier: true              # hold players at the edge of baked terrain
+  lead-seconds: 60           # seconds of travel kept baked ahead along the direction of travel
 ```
 
 Set `origin` to wherever you want your world centered.
@@ -276,7 +280,10 @@ include the CA certificates it reads from the OS trust store.
 
 ## Commands
 
-All require the `arnis.admin` permission (op by default).
+All require the `arnis.admin` permission (op by default). A second permission,
+`arnis.bypass`, exempts a player from the terrain barrier; it is granted to nobody by
+default, operators included, since flying past the frontier is what creates the holes
+the barrier prevents.
 
 | Command | Effect |
 |---|---|
@@ -305,6 +312,18 @@ All require the `arnis.admin` permission (op by default).
   land in — because a player dropped next to an unbaked neighbour makes the server
   generate it as void. If you jump into a totally fresh area another way (a plain
   `/tp` into unbaked terrain), it may be void until a bake catches up.
+- **Players get held at the frontier when they outrun generation.** Flying is much
+  faster than baking (a sprint-flying player crosses a region in ~23 s; a cold bake
+  takes 30–60 s), so `barrier: true` stops them about a view distance short of unbaked
+  terrain with a "Generating terrain ahead..." notice, and releases them when the bake
+  lands. This is prevention rather than repair, and it matters: once the server
+  generates a region itself it also caches that region file, so a later bake of the
+  same region may not appear until a restart. Raise `lead-seconds` (and `workers`) if
+  players hit the wall often; grant `arnis.bypass` to let someone through it, at the
+  cost of leaving holes behind them. Regions that do slip through are re-baked
+  automatically once the player moves on (`repair-unbaked`), tracked via the
+  `<world>/arnis-baked/` index — but a restart may still be needed for the repaired
+  terrain to show.
 - **A void hole that never fills in needs `/arnis rebake`.** Once the server generates a
   region as void it writes that void to `r.X.Z.mca`, and from then on the region looks
   "already baked" — the streaming tracker skips it forever. `/arnis rebake [radius]`

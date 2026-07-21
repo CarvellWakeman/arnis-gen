@@ -125,13 +125,17 @@ public final class ArnisCommand implements TabExecutor {
         sender.sendMessage("  origin: " + c.originLat + ", " + c.originLng + " -> MC (0,0)");
         sender.sendMessage("  scale: " + c.scale + " blocks/m, margin: " + c.bakeMargin);
         sender.sendMessage("  streaming: " + (c.streamingEnabled
-                ? "on (radius " + c.prefetchRadius + ", " + c.workers + " workers)"
+                ? "on (radius " + c.prefetchRadius + ", " + c.workers + " workers, lookahead "
+                        + (c.leadSeconds > 0 ? c.leadSeconds + "s" : "off") + ")"
                 : "off"));
+        sender.sendMessage("  barrier: " + (c.barrier && c.streamingEnabled ? "on" : "off"));
         if (svc != null) {
             sender.sendMessage("  regions baked: " + svc.bakedCount()
                     + " (in flight: " + svc.inFlightCount()
                     + ", ok: " + svc.completedCount()
                     + ", failed: " + svc.failedCount() + ")");
+            sender.sendMessage("  awaiting repair: " + svc.dirtyCount()
+                    + (c.repairUnbaked ? "" : " [repair disabled]"));
         }
         sender.sendMessage("  arnis binary: " + c.arnisBinaryNote
                 + (c.arnisBinaryFound ? "" : " [NOT FOUND - baking disabled]"));

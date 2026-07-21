@@ -64,3 +64,26 @@ streaming:
   interval-ticks: 40
   # Cap on new bakes queued per scan, to avoid flooding on teleports.
   max-per-scan: 8
+  # Re-bake regions the server generated itself. When a player outruns streaming
+  # (flying, mostly) they reach unbaked space, and the server fills and saves it —
+  # permanently, since a region file it wrote is indistinguishable from a baked one
+  # unless arnis tracks which ones it produced (it does, in <world>/arnis-baked/).
+  # With this on, such a region is re-baked automatically once the player has moved
+  # on and nothing holds it loaded, instead of needing '/arnis rebake'.
+  repair-unbaked: true
+  # Cap on repair bakes queued per scan, so repairs never starve the prefetch that
+  # keeps players from creating more of them.
+  max-repairs-per-scan: 2
+  # Hold players at the edge of baked terrain instead of letting them fly into
+  # unbaked space. This is the only complete fix: once the server generates a region
+  # itself it also caches that region file, so a later bake of it may not appear
+  # until a restart. Players are stopped about a view distance short of the unbaked
+  # edge (their view loads terrain before they reach it) and released as soon as the
+  # frontier is baked. Grant 'arnis.bypass' to ignore it.
+  barrier: true
+  # Seconds of travel to keep baked ahead of a moving player. Prefetch follows the
+  # direction of travel, so a sprint-flying player (~22 blocks/s, one region every
+  # ~23s) gets several regions of lead while a walking player gets one. Should be at
+  # least as long as a cold bake takes, or the barrier will catch fast players.
+  # 0 disables prediction and falls back to the plain radius.
+  lead-seconds: 60
