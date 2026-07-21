@@ -93,10 +93,10 @@ scale: 1.0                   # blocks per meter (1.0 = 1:1)
 bake-margin: 64              # cross-boundary context; leave as-is
 ground-level: -62            # matches arnis; leave as-is
 arnis-binary: "arnis"        # <-- SET THIS to the ABSOLUTE path from Step 1
-bake-spawn-on-enable: true   # bake the spawn region on startup
-spawn:
-  x: 8
-  z: 8
+bake-spawn-on-enable: true   # bake the spawn area on startup
+spawn:                       # keep near a region CENTRE (multiple of 512, +~256)
+  x: 256                     # so only one region is pre-baked at first start
+  z: 256
 streaming:
   enabled: true
   prefetch-radius: 2         # regions baked ahead of each player (1 region = 512 blocks)

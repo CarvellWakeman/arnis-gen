@@ -9,6 +9,8 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * The on-demand server terrain generator.
@@ -33,32 +35,60 @@ public final class ArnisPlugin extends JavaPlugin {
     public void onLoad() {
         saveDefaultConfig();
         config = ArnisConfig.from(getConfig());
-        // Bake the spawn region here, before the server loads its worlds. Then the
-        // server reads real terrain from disk instead of generating void at spawn,
-        // and arnis never overwrites a region file the server already has open (which
-        // it logs as a "corrupt regionfile" and has to recover from).
+        // Bake the spawn area here, before the server loads its worlds. Then the
+        // server reads real terrain from disk instead of generating void there, and
+        // arnis never overwrites a region file the server already has open (which it
+        // logs as a "corrupt regionfile" and has to recover from).
         if (config.bakeSpawnOnEnable && arnisBinaryConfigured()) {
-            preBakeSpawnRegion();
+            preBakeSpawnArea();
         }
     }
 
-    /** Synchronously bake the spawn region into the world folder, before world load. */
-    private void preBakeSpawnRegion() {
-        int rx = config.spawnX >> 9;
-        int rz = config.spawnZ >> 9;
+    /**
+     * Synchronously bake every region the server will load around spawn, before it
+     * loads the world. Just the spawn region isn't enough: the initial view spills
+     * into neighbouring regions (especially when spawn sits near a region edge), the
+     * server generates those as void, and the streaming tracker never bakes over a
+     * region the server already has loaded — so they'd stay a void hole at spawn.
+     */
+    private void preBakeSpawnArea() {
         File worldFolder = new File(getServer().getWorldContainer(), config.worldName);
-        File regionFile = new File(new File(worldFolder, "region"), "r." + rx + "." + rz + ".mca");
-        if (regionFile.isFile()) {
-            return; // baked in a previous run
+
+        int viewChunks = 10;
+        try {
+            viewChunks = Math.max(2, getServer().getViewDistance());
+        } catch (Throwable ignored) {
+            // Server not far enough along to report view distance; assume the default.
         }
-        getLogger().info("Pre-baking spawn region into '" + config.worldName
-                + "' before world load (first start; this can take ~30-60s)...");
-        RegionBaker.Result res = new RegionBaker(this, config).bake(worldFolder, rx, rz);
-        if (res.ok) {
-            getLogger().info("Spawn region pre-baked.");
-        } else {
-            getLogger().warning("Spawn region pre-bake failed; spawn may be void until it streams in.");
+        // Regions overlapping the spawn view, with a couple of chunks of margin.
+        int radius = (viewChunks + 2) * 16;
+        int minRx = (config.spawnX - radius) >> 9;
+        int maxRx = (config.spawnX + radius) >> 9;
+        int minRz = (config.spawnZ - radius) >> 9;
+        int maxRz = (config.spawnZ + radius) >> 9;
+
+        List<int[]> toBake = new ArrayList<>();
+        for (int rz = minRz; rz <= maxRz; rz++) {
+            for (int rx = minRx; rx <= maxRx; rx++) {
+                File rf = new File(new File(worldFolder, "region"), "r." + rx + "." + rz + ".mca");
+                if (!rf.isFile()) {
+                    toBake.add(new int[] {rx, rz});
+                }
+            }
         }
+        if (toBake.isEmpty()) {
+            return; // already baked in a previous run
+        }
+        getLogger().info("Pre-baking " + toBake.size() + " spawn-area region(s) into '"
+                + config.worldName + "' before world load (first start; each takes ~30-60s on a "
+                + "debug arnis build; use a release build and a region-centered spawn to speed this up)...");
+        RegionBaker baker = new RegionBaker(this, config);
+        for (int[] r : toBake) {
+            if (!baker.bake(worldFolder, r[0], r[1]).ok) {
+                getLogger().warning("Spawn-area pre-bake failed for region " + r[0] + "," + r[1] + ".");
+            }
+        }
+        getLogger().info("Spawn area pre-baked.");
     }
 
     @Override

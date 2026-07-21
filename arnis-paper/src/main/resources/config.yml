@@ -29,9 +29,13 @@ arnis-binary: "arnis"
 bake-spawn-on-enable: true
 
 # Spawn point in Minecraft X/Z. Y is derived from the baked terrain.
+# Prefer a point near the CENTRE of a region (multiples of 512, + ~256) so the
+# initial view stays inside one region and only that region is pre-baked at first
+# start. A spawn near a region edge makes the view spill into neighbours, which are
+# then pre-baked too (correct, but a slower first start).
 spawn:
-  x: 8
-  z: 8
+  x: 256
+  z: 256
 
 # --- Automatic streaming (Phase 2) ---
 streaming:
