@@ -54,26 +54,11 @@ public final class ArnisPlugin extends JavaPlugin {
     private void preBakeSpawnArea() {
         File worldFolder = new File(getServer().getWorldContainer(), config.worldName);
 
-        int viewChunks = 10;
-        try {
-            viewChunks = Math.max(2, getServer().getViewDistance());
-        } catch (Throwable ignored) {
-            // Server not far enough along to report view distance; assume the default.
-        }
-        // Regions overlapping the spawn view, with a couple of chunks of margin.
-        int radius = (viewChunks + 2) * 16;
-        int minRx = (config.spawnX - radius) >> 9;
-        int maxRx = (config.spawnX + radius) >> 9;
-        int minRz = (config.spawnZ - radius) >> 9;
-        int maxRz = (config.spawnZ + radius) >> 9;
-
         List<int[]> toBake = new ArrayList<>();
-        for (int rz = minRz; rz <= maxRz; rz++) {
-            for (int rx = minRx; rx <= maxRx; rx++) {
-                File rf = new File(new File(worldFolder, "region"), "r." + rx + "." + rz + ".mca");
-                if (!rf.isFile()) {
-                    toBake.add(new int[] {rx, rz});
-                }
+        for (int[] r : regionsAroundView(config.spawnX, config.spawnZ)) {
+            File rf = new File(new File(worldFolder, "region"), "r." + r[0] + "." + r[1] + ".mca");
+            if (!rf.isFile()) {
+                toBake.add(r);
             }
         }
         if (toBake.isEmpty()) {
@@ -89,6 +74,34 @@ public final class ArnisPlugin extends JavaPlugin {
             }
         }
         getLogger().info("Spawn area pre-baked.");
+    }
+
+    /**
+     * Every region the server will load when a player stands at block {@code (x, z)}:
+     * the whole view distance, plus two chunks of margin.
+     *
+     * <p>Anywhere a player is placed, all of these must already be baked. A player
+     * dropped into a region without its neighbours sees the view spill across the
+     * region border, the server generate the neighbour as void, and — because the
+     * tracker never bakes a region the server already has loaded, and the server
+     * persists that void under the same region-file name — the seam becomes
+     * permanent. Used by both the spawn pre-bake and {@code /arnis goto}.
+     */
+    public List<int[]> regionsAroundView(int x, int z) {
+        int viewChunks = 10;
+        try {
+            viewChunks = Math.max(2, getServer().getViewDistance());
+        } catch (Throwable ignored) {
+            // Server not far enough along to report view distance; assume the default.
+        }
+        int radius = (viewChunks + 2) * 16;
+        List<int[]> out = new ArrayList<>();
+        for (int rz = (z - radius) >> 9; rz <= (z + radius) >> 9; rz++) {
+            for (int rx = (x - radius) >> 9; rx <= (x + radius) >> 9; rx++) {
+                out.add(new int[] {rx, rz});
+            }
+        }
+        return out;
     }
 
     @Override

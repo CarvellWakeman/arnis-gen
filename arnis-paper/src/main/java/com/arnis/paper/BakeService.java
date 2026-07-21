@@ -60,7 +60,13 @@ public final class BakeService {
         return (((long) rx) << 32) | (rz & 0xffffffffL);
     }
 
-    /** Seed the "already baked" set from region files present on disk. */
+    /**
+     * Seed the "already baked" set from region files present on disk.
+     *
+     * <p>Presence is a proxy, not proof: the server writes a region file for any
+     * region it loads, so one it generated as void looks identical here. Such a
+     * region is then never baked again — see {@link #rebake} for the way out.
+     */
     public void initFromDisk(File worldDir) {
         File regionDir = new File(worldDir, "region");
         File[] files = regionDir.listFiles();
@@ -123,7 +129,32 @@ public final class BakeService {
         if (!inFlight.add(k)) {
             return; // a bake is already running for this region
         }
+        startBake(worldDir, rx, rz, k);
+    }
 
+    /**
+     * Like {@link #submit}, but ignores the "already baked" set and always runs a
+     * fresh bake.
+     *
+     * <p>Region-file presence is not proof arnis produced it: if the server loaded
+     * an unbaked region it generates void chunks and persists them under the same
+     * {@code r.X.Z.mca} name, after which {@link #initFromDisk} counts that region
+     * as baked and nothing ever regenerates it. This is the escape hatch for those,
+     * and for regions baked by an older/buggier arnis. Still de-duplicated against
+     * in-flight bakes. Must be called on the main thread.
+     */
+    public void rebake(File worldDir, int rx, int rz, Consumer<Boolean> onDone) {
+        long k = key(rx, rz);
+        if (onDone != null) {
+            waiters.computeIfAbsent(k, key -> new ArrayList<>()).add(onDone);
+        }
+        if (!inFlight.add(k)) {
+            return; // a bake is already running for this region
+        }
+        startBake(worldDir, rx, rz, k);
+    }
+
+    private void startBake(File worldDir, int rx, int rz, long k) {
         pool.submit(() -> {
             RegionBaker.Result res = baker.bake(worldDir, rx, rz);
             runOnMain(() -> {

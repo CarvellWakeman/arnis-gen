@@ -76,6 +76,29 @@ fn snow_threshold_for(ed: &ElevationData, lat_deg: f64, ground_level: i32) -> i3
     (ground_level as f64 + (snowline - ed.min_height_m) * ed.blocks_per_meter).round() as i32
 }
 
+/// Ground level raised so the deepest water carve still fits above `MIN_Y`.
+///
+/// This value anchors the elevation->Y affine (`Y = floor + (h - base) * bpm`), so
+/// under a fixed vertical datum it MUST be identical in every region. Deriving it
+/// from the region's own water (`local_max_depth`) is what makes a region holding a
+/// wide river sit up to `MAX_WATER_DEPTH` blocks above its dry neighbour, faulting
+/// the terrain along the shared border. With `fixed_datum` we therefore reserve the
+/// deepest possible carve unconditionally — constant everywhere, at the cost of a
+/// few unused blocks under regions that have no deep water.
+///
+/// `local_max_depth` is `None` when land cover is unavailable (or unused).
+fn water_floor(ground_level: i32, local_max_depth: Option<i32>, fixed_datum: bool) -> i32 {
+    let reserve = if fixed_datum {
+        crate::water_depth::MAX_WATER_DEPTH
+    } else {
+        match local_max_depth {
+            Some(d) => d,
+            None => return ground_level,
+        }
+    };
+    ground_level.max(crate::world_editor::MIN_Y + reserve + 2)
+}
+
 impl Ground {
     #[cfg(test)]
     pub fn new_flat(ground_level: i32) -> Self {
@@ -173,7 +196,6 @@ impl Ground {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     pub fn new_enabled(
         bbox: &LLBBox,
         scale: f64,
@@ -202,14 +224,17 @@ impl Ground {
         bench.mark("elev_landcover_fetch");
 
         // Raise the floor for the deepest water carve (elevation path only).
-        let water_floor = match &land_cover {
-            Some(lc) => {
-                let max_depth =
-                    crate::water_depth::estimate_max_carve_depth(&lc.grid, world_w, world_h);
-                ground_level.max(crate::world_editor::MIN_Y + max_depth + 2)
-            }
-            None => ground_level,
+        // Under a fixed datum the local depth is not consulted at all (see
+        // `water_floor`), so don't pay for the distance transform either.
+        let fixed_datum = vertical_datum.is_some();
+        let local_max_depth = if fixed_datum {
+            None
+        } else {
+            land_cover
+                .as_ref()
+                .map(|lc| crate::water_depth::estimate_max_carve_depth(&lc.grid, world_w, world_h))
         };
+        let water_floor = water_floor(ground_level, local_max_depth, fixed_datum);
 
         let source_mode = if aws_only_elevation {
             crate::elevation::SourceMode::AwsOnly
@@ -829,6 +854,30 @@ mod tests {
             snow_threshold_y: i32::MAX,
             climate: crate::climate::Climate::Temperate,
         }
+    }
+
+    // The region-bake guarantee, at the affine's anchor: under a fixed vertical
+    // datum the ground floor must not depend on what water happens to fall inside
+    // this region. A dry region and one holding a wide river anchor identically,
+    // so their terrain lines up instead of faulting at the shared border.
+    #[test]
+    fn fixed_datum_water_floor_ignores_local_water() {
+        let dry = water_floor(-62, Some(0), true);
+        let river = water_floor(-62, Some(crate::water_depth::MAX_WATER_DEPTH), true);
+        let no_land_cover = water_floor(-62, None, true);
+        assert_eq!(dry, river);
+        assert_eq!(dry, no_land_cover);
+        // Deepest carve still clears the world floor.
+        assert!(dry - crate::water_depth::MAX_WATER_DEPTH > crate::world_editor::MIN_Y);
+    }
+
+    // Full-world generation has a single grid and no neighbours to line up with,
+    // so it keeps reserving only the depth it actually needs.
+    #[test]
+    fn adaptive_water_floor_still_tracks_local_water() {
+        assert_eq!(water_floor(-62, Some(0), false), -62);
+        assert_eq!(water_floor(-62, Some(6), false), -56);
+        assert_eq!(water_floor(-62, None, false), -62);
     }
 
     // Flat mode (no elevation) still maps land-cover lookups via the stored world dims, with edge clamping.

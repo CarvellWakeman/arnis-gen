@@ -9,6 +9,7 @@ import org.bukkit.entity.Player;
 
 import java.io.File;
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * The {@code /arnis} admin command.
@@ -18,15 +19,17 @@ import java.util.Arrays;
  *   <li>{@code /arnis prewarm [radius]} — bake the regions within {@code radius}
  *       (in regions) around the sender (or world spawn) now, via the bake pool.
  *   <li>{@code /arnis goto <lat> <lng>} — teleport to the in-game location of a
- *       real-world coordinate, baking that region first if needed.
+ *       real-world coordinate, baking everything the arrival view reaches first.
  *   <li>{@code /arnis reload [radius]} — reload baked region chunks around you
  *       from disk (e.g. after a prewarm) without a restart.
+ *   <li>{@code /arnis rebake [radius]} — force-regenerate the regions around you,
+ *       even ones already on disk (repairs void or stale terrain).
  * </ul>
  */
 public final class ArnisCommand implements CommandExecutor {
 
-    private static final String USAGE =
-            "Usage: /arnis <status|prewarm [radius]|goto <lat> <lng>|reload [radius]>";
+    private static final String USAGE = "Usage: /arnis <status|prewarm [radius]"
+            + "|goto <lat> <lng>|reload [radius]|rebake [radius]>";
 
     private final ArnisPlugin plugin;
 
@@ -49,6 +52,8 @@ public final class ArnisCommand implements CommandExecutor {
                 return gotoLocation(sender, args);
             case "reload":
                 return reload(sender, args);
+            case "rebake":
+                return rebake(sender, args);
             default:
                 sender.sendMessage("Unknown subcommand. " + USAGE);
                 return true;
@@ -170,25 +175,54 @@ public final class ArnisCommand implements CommandExecutor {
         BakeService svc = plugin.bakeService();
         File worldDir = world.getWorldFolder();
 
-        if (svc.isKnown(rx, rz)) {
+        // Bake everything the player's view will reach, not just the region they
+        // land in. A teleport lands at an arbitrary point, so it is usually within
+        // view distance of a region border; baking only the destination leaves the
+        // neighbours to be generated as void the instant the player arrives, and
+        // that void is then persisted and never re-baked.
+        List<int[]> regions = plugin.regionsAroundView(x, z);
+        int pending = 0;
+        for (int[] r : regions) {
+            if (!svc.isKnown(r[0], r[1])) {
+                pending++;
+            }
+        }
+
+        if (pending == 0) {
             sender.sendMessage(String.format("Going to %.5f,%.5f -> MC %d,%d (region %d,%d)...",
                     lat, lng, x, z, rx, rz));
         } else {
             sender.sendMessage(String.format(
-                    "Baking region %d,%d for %.5f,%.5f -> MC %d,%d; will arrive when ready...",
-                    rx, rz, lat, lng, x, z));
+                    "Baking %d region(s) around %.5f,%.5f -> MC %d,%d; will arrive when ready...",
+                    pending, lat, lng, x, z));
         }
 
-        // submit() fires immediately if already baked, or when the (possibly
-        // already in-flight) bake finishes.
-        svc.submit(worldDir, rx, rz, ok -> {
-            if (!ok) {
-                sender.sendMessage("Bake failed for that location.");
-                return;
-            }
-            plugin.reloadRegionChunks(rx, rz);
-            arriveAt(sender, world, lat, lng, x, z);
-        });
+        // Arrive only once every region is done, so the server never generates void
+        // where the player is about to look. submit() fires immediately for regions
+        // already baked, or when the (possibly already in-flight) bake finishes;
+        // every callback runs on the main thread, so these counters need no locking.
+        int[] remaining = {regions.size()};
+        boolean[] destOk = {true};
+        for (int[] r : regions) {
+            final int frx = r[0];
+            final int frz = r[1];
+            svc.submit(worldDir, frx, frz, ok -> {
+                if (!ok && frx == rx && frz == rz) {
+                    destOk[0] = false;
+                }
+                if (--remaining[0] > 0) {
+                    return;
+                }
+                for (int[] done : regions) {
+                    plugin.reloadRegionChunks(done[0], done[1]);
+                }
+                if (!destOk[0]) {
+                    sender.sendMessage("Bake failed for that location.");
+                    return;
+                }
+                arriveAt(sender, world, lat, lng, x, z);
+            });
+        }
         return true;
     }
 
@@ -203,6 +237,67 @@ public final class ArnisCommand implements CommandExecutor {
             sender.sendMessage(String.format("%.5f,%.5f -> MC x=%d z=%d (region %d,%d)",
                     lat, lng, x, z, x >> 9, z >> 9));
         }
+    }
+
+    /**
+     * Force-regenerate the regions around the sender, ignoring the "already baked"
+     * set. This is the repair path for regions whose file exists but whose contents
+     * are wrong: void the server generated before arnis got there, or terrain baked
+     * by an older arnis (a changed origin, scale, or vertical datum).
+     */
+    private boolean rebake(CommandSender sender, String[] args) {
+        World world = plugin.arnisWorld();
+        if (world == null) {
+            sender.sendMessage("Arnis world is not loaded.");
+            return true;
+        }
+
+        int radius = 1;
+        if (args.length >= 2) {
+            try {
+                radius = Math.max(0, Integer.parseInt(args[1]));
+            } catch (NumberFormatException e) {
+                sender.sendMessage("Radius must be a whole number.");
+                return true;
+            }
+        }
+
+        int centerX;
+        int centerZ;
+        if (sender instanceof Player player && player.getWorld().equals(world)) {
+            centerX = player.getLocation().getBlockX();
+            centerZ = player.getLocation().getBlockZ();
+        } else {
+            centerX = world.getSpawnLocation().getBlockX();
+            centerZ = world.getSpawnLocation().getBlockZ();
+        }
+        int centerRx = centerX >> 9;
+        int centerRz = centerZ >> 9;
+        File worldDir = world.getWorldFolder();
+        BakeService svc = plugin.bakeService();
+
+        int queued = 0;
+        for (int dz = -radius; dz <= radius; dz++) {
+            for (int dx = -radius; dx <= radius; dx++) {
+                final int rx = centerRx + dx;
+                final int rz = centerRz + dz;
+                // Drop the server's resident copy first, unsaved, so it cannot write
+                // its stale chunks back over the file arnis is about to replace.
+                plugin.reloadRegionChunks(rx, rz);
+                svc.rebake(worldDir, rx, rz, ok -> {
+                    if (ok) {
+                        plugin.reloadRegionChunks(rx, rz);
+                    }
+                });
+                queued++;
+            }
+        }
+
+        sender.sendMessage("Re-baking " + queued + " region(s) around region "
+                + centerRx + "," + centerRz + " (progress in the console).");
+        sender.sendMessage("If terrain still looks stale afterwards, restart the server: "
+                + "the server can hold a cached region-file handle that misses arnis's write.");
+        return true;
     }
 
     private boolean reload(CommandSender sender, String[] args) {
