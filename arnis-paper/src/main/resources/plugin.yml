@@ -17,3 +17,8 @@ permissions:
   arnis.admin:
     description: Manage the arnis generator.
     default: op
+  arnis.bypass:
+    description: Ignore the terrain barrier and fly into unbaked space.
+    # Not granted to operators by default: an op flying past the frontier creates
+    # exactly the void the barrier exists to prevent.
+    default: false

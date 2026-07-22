@@ -39,3 +39,22 @@ jobs:
 
       - name: Run unit tests
         run: cargo test --all-targets --all-features
+
+  # The build a Linux server host actually runs: CLI only, so none of the GTK/WebKit
+  # system libraries the `gui` feature needs have to be installed. Built without the
+  # GUI deps so a missing one fails here rather than on someone's server.
+  build-headless:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-arnis-linux
+        with:
+          gui-deps: "false"
+
+      - name: Build headless binary
+        run: cargo build --release --no-default-features
+
+      - name: Check it runs and can bake regions
+        run: |
+          ./target/release/arnis --version
+          ./target/release/arnis --help | grep -- --bake-region

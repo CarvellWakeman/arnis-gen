@@ -1,0 +1,123 @@
+name: Server Bundle
+
+# Builds everything a server owner needs — the headless arnis engine and the
+# arnis-paper plugin jar — and packages them as one zip per platform. Attached to
+# GitHub releases; downloadable as a workflow artifact otherwise.
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'arnis-paper/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/server-bundle.yml'
+
+permissions:
+  contents: write # to attach the bundles to a release
+
+jobs:
+  # Platform-independent, so it is built once and shared by every bundle.
+  plugin:
+    name: Plugin jar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.1'
+
+      - name: Build plugin jar
+        run: gradle --project-dir arnis-paper build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: plugin-jar
+          path: arnis-paper/build/libs/*.jar
+          if-no-files-found: error
+
+  bundle:
+    name: ${{ matrix.label }} bundle
+    needs: plugin
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Built against glibc 2.35 — older than any currently supported distro's,
+          # and glibc is backward compatible, so this also runs on newer hosts.
+          # Distros older than that (or musl ones) build from source: see BUILDING.md.
+          - os: ubuntu-22.04
+            label: linux-x86_64
+            binary: arnis
+          - os: windows-latest
+            label: windows-x86_64
+            binary: arnis.exe
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-arnis-linux
+        with:
+          # A server runs the CLI only, so the GUI's GTK/WebKit libraries are
+          # neither installed nor linked — the binary needs no desktop libraries.
+          gui-deps: "false"
+
+      - name: Build headless engine
+        run: cargo build --release --no-default-features
+
+      - name: Check the engine runs and can bake regions
+        shell: bash
+        run: |
+          ./target/release/${{ matrix.binary }} --version
+          ./target/release/${{ matrix.binary }} --help | grep -- --bake-region
+
+      - name: Download plugin jar
+        uses: actions/download-artifact@v8
+        with:
+          name: plugin-jar
+          path: jar
+
+      - name: Assemble bundle
+        shell: bash
+        run: |
+          dir="arnis-server-${{ matrix.label }}"
+          mkdir -p "$dir"
+          cp "target/release/${{ matrix.binary }}" "$dir/"
+          cp jar/*.jar "$dir/"
+          cp arnis-paper/SERVER_SETUP.md "$dir/"
+          cp arnis-paper/src/main/resources/config.yml "$dir/config.example.yml"
+          ls -l "$dir"
+
+      # zip stores unix modes, so the engine stays executable through the round trip
+      # on any extractor that honours them (unzip does; some GUI tools do not).
+      - name: Zip bundle (Linux)
+        if: runner.os == 'Linux'
+        run: zip -r "arnis-server-${{ matrix.label }}.zip" "arnis-server-${{ matrix.label }}"
+
+      - name: Zip bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path "arnis-server-${{ matrix.label }}" -DestinationPath "arnis-server-${{ matrix.label }}.zip"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: arnis-server-${{ matrix.label }}
+          path: arnis-server-${{ matrix.label }}.zip
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v3
+        with:
+          files: arnis-server-${{ matrix.label }}.zip

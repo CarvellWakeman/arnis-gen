@@ -3,13 +3,15 @@ package com.arnis.paper;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.command.Command;
-import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.command.TabExecutor;
 import org.bukkit.entity.Player;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * The {@code /arnis} admin command.
@@ -26,10 +28,16 @@ import java.util.List;
  *       even ones already on disk (repairs void or stale terrain).
  * </ul>
  */
-public final class ArnisCommand implements CommandExecutor {
+public final class ArnisCommand implements TabExecutor {
 
     private static final String USAGE = "Usage: /arnis <status|prewarm [radius]"
             + "|goto <lat> <lng>|reload [radius]|rebake [radius]>";
+
+    private static final List<String> SUBCOMMANDS =
+            List.of("status", "prewarm", "goto", "reload", "rebake");
+
+    /** Suggested radii — small values, since each region is a bake. */
+    private static final List<String> RADII = List.of("1", "2", "3");
 
     private final ArnisPlugin plugin;
 
@@ -60,6 +68,53 @@ public final class ArnisCommand implements CommandExecutor {
         }
     }
 
+    /**
+     * Completions for {@code /arnis}: the subcommands, then per-subcommand arguments.
+     *
+     * <p>{@code goto} is offered the configured origin, so tabbing through it produces
+     * a coordinate that is guaranteed to be in range — the common case for a first
+     * visit, and a reminder of where the world is anchored.
+     *
+     * <p>Returns an empty list rather than {@code null} where nothing fits: {@code null}
+     * makes Bukkit fall back to completing online player names, which is never useful
+     * here.
+     */
+    @Override
+    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        if (args.length <= 1) {
+            return matching(args.length == 0 ? "" : args[0], SUBCOMMANDS);
+        }
+        switch (args[0].toLowerCase(Locale.ROOT)) {
+            case "prewarm":
+            case "reload":
+            case "rebake":
+                return args.length == 2 ? matching(args[1], RADII) : List.of();
+            case "goto":
+                ArnisConfig c = plugin.config();
+                if (args.length == 2) {
+                    return matching(args[1], List.of(String.valueOf(c.originLat)));
+                }
+                if (args.length == 3) {
+                    return matching(args[2], List.of(String.valueOf(c.originLng)));
+                }
+                return List.of();
+            default:
+                return List.of();
+        }
+    }
+
+    /** The options starting with {@code prefix}, case-insensitively. */
+    private static List<String> matching(String prefix, List<String> options) {
+        String p = prefix.toLowerCase(Locale.ROOT);
+        List<String> out = new ArrayList<>(options.size());
+        for (String option : options) {
+            if (option.toLowerCase(Locale.ROOT).startsWith(p)) {
+                out.add(option);
+            }
+        }
+        return out;
+    }
+
     private boolean status(CommandSender sender) {
         ArnisConfig c = plugin.config();
         World world = plugin.arnisWorld();
@@ -70,15 +125,28 @@ public final class ArnisCommand implements CommandExecutor {
         sender.sendMessage("  origin: " + c.originLat + ", " + c.originLng + " -> MC (0,0)");
         sender.sendMessage("  scale: " + c.scale + " blocks/m, margin: " + c.bakeMargin);
         sender.sendMessage("  streaming: " + (c.streamingEnabled
-                ? "on (radius " + c.prefetchRadius + ", " + c.workers + " workers)"
+                ? "on (radius " + c.prefetchRadius + ", " + c.workers + " workers, lookahead "
+                        + (c.leadSeconds > 0 ? c.leadSeconds + "s" : "off") + ")"
                 : "off"));
+        sender.sendMessage("  barrier: " + (c.barrier && c.streamingEnabled ? "on" : "off")
+                + ", safe-teleport: " + (c.safeTeleport && c.streamingEnabled ? "on" : "off"));
         if (svc != null) {
             sender.sendMessage("  regions baked: " + svc.bakedCount()
                     + " (in flight: " + svc.inFlightCount()
                     + ", ok: " + svc.completedCount()
                     + ", failed: " + svc.failedCount() + ")");
+            int[] byPriority = svc.queuedByPriority();
+            sender.sendMessage("  queued: " + svc.queuedCount()
+                    + " (waiting " + byPriority[BakeService.Priority.WAITING.ordinal()]
+                    + ", prefetch " + byPriority[BakeService.Priority.PREFETCH.ordinal()]
+                    + ", repair " + byPriority[BakeService.Priority.REPAIR.ordinal()] + ")");
+            sender.sendMessage("  running: " + svc.runningCount() + "/" + svc.workerCount()
+                    + " worker(s), dropped as stale: " + svc.droppedCount());
+            sender.sendMessage("  awaiting repair: " + svc.dirtyCount()
+                    + (c.repairUnbaked ? "" : " [repair disabled]"));
         }
-        sender.sendMessage("  arnis binary: " + c.arnisBinary);
+        sender.sendMessage("  arnis binary: " + c.arnisBinaryNote
+                + (c.arnisBinaryFound ? "" : " [NOT FOUND - baking disabled]"));
         return true;
     }
 
@@ -182,11 +250,20 @@ public final class ArnisCommand implements CommandExecutor {
         // that void is then persisted and never re-baked.
         List<int[]> regions = plugin.regionsAroundView(x, z);
         int pending = 0;
+        int alreadyRunning = 0;
         for (int[] r : regions) {
             if (!svc.isKnown(r[0], r[1])) {
                 pending++;
+            } else if (!svc.isBaked(r[0], r[1])) {
+                // Queued or mid-bake already: a running one cannot be preempted, so
+                // this is the part of the wait that priority cannot shorten.
+                alreadyRunning++;
             }
         }
+        long startedAt = System.currentTimeMillis();
+        plugin.getLogger().info("goto " + lat + "," + lng + " -> region " + rx + "," + rz
+                + ": " + regions.size() + " region(s) in the arrival view, " + pending
+                + " to queue, " + alreadyRunning + " already queued/running.");
 
         if (pending == 0) {
             sender.sendMessage(String.format("Going to %.5f,%.5f -> MC %d,%d (region %d,%d)...",
@@ -216,12 +293,14 @@ public final class ArnisCommand implements CommandExecutor {
                 for (int[] done : regions) {
                     plugin.reloadRegionChunks(done[0], done[1]);
                 }
+                plugin.getLogger().info("goto ready in "
+                        + ((System.currentTimeMillis() - startedAt) / 1000) + "s.");
                 if (!destOk[0]) {
                     sender.sendMessage("Bake failed for that location.");
                     return;
                 }
                 arriveAt(sender, world, lat, lng, x, z);
-            });
+            }, BakeService.Priority.WAITING);
         }
         return true;
     }

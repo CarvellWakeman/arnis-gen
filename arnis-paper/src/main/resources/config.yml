@@ -30,8 +30,12 @@ vertical-scale: 1.0
 # set this near that area's base elevation so terrain isn't buried under deep stone.
 elevation-base: 0.0
 
-# Path to the arnis executable (the Rust binary). Use an absolute path unless it
-# is on the server process's PATH.
+# Path to the arnis executable (the Rust binary). An absolute path always works.
+# Anything else is searched for, in order, under: this plugin folder, the server
+# directory and its parents (so a server inside the arnis checkout finds
+# target/release/arnis), and finally PATH. `.exe` is added on Windows and dropped
+# elsewhere, so the same config works on either OS. The default below finds a
+# release or debug build of an enclosing checkout without any editing.
 arnis-binary: "arnis"
 
 # Bake the spawn region when the plugin first enables so spawn has real terrain.
@@ -60,3 +64,33 @@ streaming:
   interval-ticks: 40
   # Cap on new bakes queued per scan, to avoid flooding on teleports.
   max-per-scan: 8
+  # Re-bake regions the server generated itself. When a player outruns streaming
+  # (flying, mostly) they reach unbaked space, and the server fills and saves it —
+  # permanently, since a region file it wrote is indistinguishable from a baked one
+  # unless arnis tracks which ones it produced (it does, in <world>/arnis-baked/).
+  # With this on, such a region is re-baked automatically once the player has moved
+  # on and nothing holds it loaded, instead of needing '/arnis rebake'.
+  repair-unbaked: true
+  # Cap on repair bakes queued per scan, so repairs never starve the prefetch that
+  # keeps players from creating more of them.
+  max-repairs-per-scan: 2
+  # Hold players at the edge of baked terrain instead of letting them fly into
+  # unbaked space. This is the only complete fix: once the server generates a region
+  # itself it also caches that region file, so a later bake of it may not appear
+  # until a restart. Players are stopped about a view distance short of the unbaked
+  # edge (their view loads terrain before they reach it) and released as soon as the
+  # frontier is baked. Grant 'arnis.bypass' to ignore it.
+  barrier: true
+  # Defer teleports into unbaked terrain instead of landing a player in void. The
+  # barrier cannot cover teleports — they arrive with no lead time, and blocking one
+  # outright would just strand the player — so the teleport is held, the destination's
+  # arrival view is baked, and then it is re-issued. This is what '/arnis goto' has
+  # always done; this setting extends it to plain /tp, portals and other plugins'
+  # warps. Also skipped for 'arnis.bypass'.
+  safe-teleport: true
+  # Seconds of travel to keep baked ahead of a moving player. Prefetch follows the
+  # direction of travel, so a sprint-flying player (~22 blocks/s, one region every
+  # ~23s) gets several regions of lead while a walking player gets one. Should be at
+  # least as long as a cold bake takes, or the barrier will catch fast players.
+  # 0 disables prediction and falls back to the plain radius.
+  lead-seconds: 60

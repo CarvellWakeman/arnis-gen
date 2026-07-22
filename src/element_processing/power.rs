@@ -10,6 +10,7 @@ use crate::bresenham::bresenham_line;
 use crate::floodfill_cache::{CoordinateBitmap, FloodFillCache};
 use crate::osm_parser::{ProcessedElement, ProcessedNode, ProcessedWay};
 use crate::world_editor::WorldEditor;
+use std::collections::HashMap;
 use std::time::Duration;
 
 /// Generate power infrastructure from way elements (power lines)
@@ -72,6 +73,63 @@ pub fn generate_power(
     }
 }
 
+/// Minimum tagged height, and minimum rotor diameter, for a wind generator to be
+/// rendered as a turbine (metres).
+const WIND_TURBINE_MIN_SIZE_M: f64 = 5.0;
+
+/// Minimum rated output for a wind generator to be rendered as a turbine (watts).
+const WIND_TURBINE_MIN_OUTPUT_W: f64 = 1_000_000.0;
+
+/// Whether a wind generator is large enough to be worth the turbine schematic.
+///
+/// The bundled asset is a utility-scale turbine, so stamping it on a rooftop or
+/// garden unit looks absurd. Size is tagged inconsistently — of OSM's wind
+/// generators roughly 54% carry `generator:output:electricity`, 11%
+/// `rotor:diameter` and only 8% `height` — so any one of those counts as evidence.
+/// Without evidence the feature is skipped: an unsized generator is far more often
+/// a small one than a wind farm.
+fn is_large_wind_turbine(tags: &HashMap<String, String>) -> bool {
+    let big_metres = |key: &str| {
+        tags.get(key)
+            .and_then(|v| parse_metres(v))
+            .is_some_and(|m| m >= WIND_TURBINE_MIN_SIZE_M)
+    };
+    big_metres("height")
+        || big_metres("height:hub")
+        || big_metres("rotor:diameter")
+        || tags
+            .get("generator:output:electricity")
+            .and_then(|v| parse_watts(v))
+            .is_some_and(|w| w >= WIND_TURBINE_MIN_OUTPUT_W)
+}
+
+/// Parse a metre value such as `"120"`, `"120 m"` or `"82m"`.
+fn parse_metres(value: &str) -> Option<f64> {
+    value
+        .trim()
+        .trim_end_matches('m')
+        .trim()
+        .parse::<f64>()
+        .ok()
+}
+
+/// Parse a power value such as `"2 MW"`, `"1500 kW"` or `"800 W"` into watts.
+/// Returns `None` for the non-numeric values OSM also carries here (`yes`, `auto`).
+fn parse_watts(value: &str) -> Option<f64> {
+    let lowered = value.trim().to_ascii_lowercase();
+    let without_w = lowered.trim_end_matches('w').trim();
+    let (number, multiplier) = if let Some(rest) = without_w.strip_suffix('g') {
+        (rest, 1e9)
+    } else if let Some(rest) = without_w.strip_suffix('m') {
+        (rest, 1e6)
+    } else if let Some(rest) = without_w.strip_suffix('k') {
+        (rest, 1e3)
+    } else {
+        (without_w, 1.0)
+    };
+    number.trim().parse::<f64>().ok().map(|n| n * multiplier)
+}
+
 /// Place a wind turbine or solar farm depending on generator:source.
 fn generate_generator(
     editor: &mut WorldEditor,
@@ -82,6 +140,9 @@ fn generate_generator(
 ) {
     match element.tags().get("generator:source").map(|s| s.as_str()) {
         Some("wind") => {
+            if !is_large_wind_turbine(element.tags()) {
+                return;
+            }
             let (mut sx, mut sz, mut n) = (0i64, 0i64, 0i64);
             for node in element.nodes() {
                 sx += node.x as i64;
@@ -184,7 +245,8 @@ pub fn generate_power_nodes(editor: &mut WorldEditor, node: &ProcessedNode) {
             "tower" => generate_power_tower_from_node(editor, node),
             "pole" => generate_power_pole_from_node(editor, node),
             "generator"
-                if node.tags.get("generator:source").map(|s| s.as_str()) == Some("wind") =>
+                if node.tags.get("generator:source").map(|s| s.as_str()) == Some("wind")
+                    && is_large_wind_turbine(&node.tags) =>
             {
                 crate::structures::windturbine::place(editor, node.x, node.z);
             }
@@ -474,5 +536,70 @@ fn generate_power_line(editor: &mut WorldEditor, way: &ProcessedWay) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tags(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn parses_metre_values() {
+        assert_eq!(parse_metres("120"), Some(120.0));
+        assert_eq!(parse_metres("120 m"), Some(120.0));
+        assert_eq!(parse_metres("82m"), Some(82.0));
+        assert_eq!(parse_metres("3.5"), Some(3.5));
+        assert_eq!(parse_metres("tall"), None);
+    }
+
+    #[test]
+    fn parses_power_values() {
+        assert_eq!(parse_watts("2 MW"), Some(2e6));
+        assert_eq!(parse_watts("2MW"), Some(2e6));
+        assert_eq!(parse_watts("2.3 mw"), Some(2.3e6));
+        assert_eq!(parse_watts("1500 kW"), Some(1.5e6));
+        assert_eq!(parse_watts("800 W"), Some(800.0));
+        assert_eq!(parse_watts("800"), Some(800.0));
+        // OSM also carries non-numeric values here; they are not evidence of size.
+        assert_eq!(parse_watts("yes"), None);
+    }
+
+    #[test]
+    fn large_turbines_are_rendered() {
+        assert!(is_large_wind_turbine(&tags(&[("height", "120")])));
+        assert!(is_large_wind_turbine(&tags(&[("height:hub", "78 m")])));
+        assert!(is_large_wind_turbine(&tags(&[("rotor:diameter", "82")])));
+        assert!(is_large_wind_turbine(&tags(&[(
+            "generator:output:electricity",
+            "2 MW"
+        )])));
+        // Any one metric is enough, even alongside a small one.
+        assert!(is_large_wind_turbine(&tags(&[
+            ("height", "3"),
+            ("generator:output:electricity", "2.3 MW"),
+        ])));
+    }
+
+    #[test]
+    fn small_and_unsized_turbines_are_skipped() {
+        assert!(!is_large_wind_turbine(&tags(&[("height", "3")])));
+        assert!(!is_large_wind_turbine(&tags(&[("rotor:diameter", "1.2")])));
+        assert!(!is_large_wind_turbine(&tags(&[(
+            "generator:output:electricity",
+            "500 kW"
+        )])));
+        assert!(!is_large_wind_turbine(&tags(&[(
+            "generator:output:electricity",
+            "yes"
+        )])));
+        // No size evidence at all: skipped.
+        assert!(!is_large_wind_turbine(&tags(&[("power", "generator")])));
     }
 }

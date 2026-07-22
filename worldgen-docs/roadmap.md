@@ -49,9 +49,34 @@ just the scannable checklist of deliverables.
 - [x] **`RegionBaker`** — runs `arnis --bake-region …` as a subprocess and parses the
   `ARNIS_BAKE_RESULT` line. Pooled + de-duplicated by `BakeService` (bounded worker
   pool, `baked`/`in-flight` sets); the currently-loaded-region guard lives in `PlayerTracker`.
-- [x] **`PlayerTracker`** — bakes regions within a prefetch radius ahead of each player
-  (nearest-ring first, capped per scan), skipping regions already baked, in flight, or
-  loaded — so arnis never writes a `.mca` the server holds open.
+- [x] **`PlayerTracker`** — bakes regions ahead of each player, skipping regions already
+  baked, in flight, or loaded (from an exact `getLoadedChunks()` set) so arnis never
+  writes a `.mca` the server holds open. Prefetch is **predictive**: lookahead is derived
+  from the distance covered between scans (`getVelocity` is client-controlled and
+  unreliable for players) as `ceil(speed × lead-seconds / 512)` regions along the heading,
+  plus the laterally adjacent ones for turns, then the nearest-ring fallback. A symmetric
+  radius spent most of its budget behind and beside a travelling player.
+- [x] **Bake provenance (`BakedIndex`, `UnbakedRegionWatcher`)** — a region file proves
+  only that the *server* wrote one; it writes them for the void it generates when a player
+  outruns streaming, which then looks baked forever. Each successful bake now drops a
+  marker in `<world>/arnis-baked/` (written on the bake worker, so it survives a crash
+  before the callback). Region files without a marker are re-baked automatically once
+  nothing holds them loaded. Worlds with no index are adopted as baked, so an upgrade
+  does not re-bake everything. Regions failing three bakes are given up on until a restart
+  or an explicit `/arnis rebake`.
+- [x] **Terrain barrier (`MovementBarrier`)** — prevention, since repair is not
+  sufficient: once the server generates a region it also caches that region file, so a
+  later external bake may not appear until a restart. Blocks a move whose destination
+  *view footprint* reaches unbaked terrain (a view distance short of the edge, since the
+  view loads terrain before the player arrives) and queues those regions immediately.
+  A player already in unbaked space is never blocked, and `arnis.bypass` (granted to
+  nobody by default, operators included) opts out.
+- [x] **Safe teleports** — a teleport is the case the barrier cannot cover: it arrives
+  with no lead time, and blocking it outright would strand the player. So a teleport
+  whose destination view is unbaked is cancelled, its regions are baked, and it is then
+  re-issued — generalising what `/arnis goto` already did to plain `/tp`, portals and
+  other plugins' warps. Re-issues are flagged so they pass straight through, and a later
+  request supersedes an earlier one rather than both firing.
 - [x] **`ArnisCommand`** — `/arnis status`, `/arnis prewarm [radius]`, `/arnis goto
   <lat> <lng>`, and `/arnis reload [radius]` implemented.
 - [x] **`/arnis goto <lat> <lng>` (real-world navigation)** — teleports a player to the
@@ -77,9 +102,14 @@ just the scannable checklist of deliverables.
   (subprocess failures, malformed JSON, projection/config errors, etc.) so a server
   owner can diagnose issues from the console alone.
 - [x] **README for server owners** — `arnis-paper/SERVER_SETUP.md`: step-by-step
-  build/install/configure/play guide covering the absolute-path arnis binary, origin
-  and streaming config, entering the world via `/arnis goto`, data-source/caching
-  notes, view-distance vs prefetch-radius tuning, and troubleshooting.
+  install/configure/play guide covering the arnis binary, origin and streaming config,
+  entering the world via `/arnis goto`, data-source/caching notes, view-distance vs
+  prefetch-radius tuning, an optional Pterodactyl/Pelican section, and troubleshooting.
+- [x] **Release packaging** — the engine builds headless (`--no-default-features`, no
+  GTK/WebKit) so it runs on a server host; `arnis-binary` resolves relative paths and
+  bare names against the server directory, its parents and `PATH`; the
+  `server-bundle.yml` workflow ships one zip per platform containing the engine, the
+  plugin jar and the setup guide; build instructions live in `BUILDING.md`.
 - [x] **End-to-end smoke test** (`e2e/smoke_test.ps1`) — boots a real headless Paper
   server with the plugin + real `arnis`, asserts the void world is created and the
   spawn region bakes (`r.0.0.mca`), then stops cleanly. Re-runnable; caches downloads.
@@ -96,9 +126,27 @@ just the scannable checklist of deliverables.
   the subprocess; verified by the e2e smoke test against a live server.
 - [x] **Phase 2 — Automatic streaming.** `PlayerTracker` prefetch + `BakeService` worker
   pool + safe live region loading (bake ahead of the server so files load cleanly on
-  approach). _(arnis-side OSM/land-cover caching still pending — see §1 Global data caching)_
-- [ ] **Phase 3 — Polish.** Seam/margin tuning, region batching, self-hosted data,
-  lighting/height docs, logging, README, test mode.
+  approach). Hardened against players outrunning it: predictive lookahead, bake
+  provenance + automatic repair, and the movement barrier. Playtested by flying as fast
+  as possible and changing direction — the barrier engaged twice, released before the
+  player could walk into it, and no void regions were produced.
+- [ ] **Phase 3 — Polish.** In rough priority order:
+  - [x] **Teleport safety** — done; see §2 Safe teleports.
+  - [x] **Queue discipline** — the pool was FIFO, so a player blocked on a `goto` waited
+    behind every prefetch that happened to be queued first. It now runs a
+    `PriorityBlockingQueue` ordered by urgency (WAITING — goto, deferred teleports, the
+    barrier — then PREFETCH nearest-first, then REPAIR), then by distance to the nearest
+    player when queued, then arrival. A request for a region already queued **promotes**
+    it rather than waiting behind its original priority, and each tracker scan **drops**
+    queued work that is no longer near anybody (never anything with a waiter). Tasks go
+    through `execute()` rather than `submit()`, which would wrap them in a `FutureTask`
+    and lose the ordering.
+  - [ ] **Throughput** — bake several regions per arnis invocation to amortise the
+    Overpass/elevation fetch, the dominant cost of a cold region.
+  - [ ] **Live region-file invalidation** — make a repaired region visible without a
+    restart by dropping the server's cached `RegionFile` handle (NMS reflection; needs
+    the same defensive treatment as the `GameRule` lookup).
+  - [ ] Seam/margin tuning, self-hosted data, lighting/height docs, test mode.
 
 ## 4. Future goals (beyond the initial refactor)
 
@@ -110,7 +158,10 @@ just the scannable checklist of deliverables.
 
 ## Risks (see worldgen.md for mitigations)
 
-- Writing `.mca` files under a live server.
+- Writing `.mca` files under a live server. Mitigated by only ever baking regions with
+  no loaded chunks. The residue: the server caches an open handle per region file, so a
+  region it has already touched keeps serving its own contents until a restart — which
+  is why the barrier (prevent) matters more than the repair sweep (cure).
 - Cross-region seams on long linear features.
 - Network latency / rate limits on Overpass & elevation data.
 - Redundant global preprocessing per region.
