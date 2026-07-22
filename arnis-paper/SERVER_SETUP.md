@@ -396,5 +396,9 @@ the barrier prevents.
   wait at the frontier rather than as missing terrain. The queue is worked in priority
   order — whatever a player is blocked on first (`goto`, a deferred teleport, the
   barrier), then prefetch nearest-first, then repairs — and work for terrain nobody is
-  heading for any more is dropped. `/arnis status` shows the queue length and how many
-  have been dropped.
+  heading for any more is dropped. Because priority only decides what runs *next*, and a
+  bake already running cannot be interrupted, the pool also runs a few extra workers
+  while somebody is blocked (never more than double `workers`, and only for as long as
+  the wait lasts) so an urgent bake starts at once instead of waiting for a prefetch to
+  finish. `/arnis status` breaks the queue down by priority and shows running workers and
+  the stale-drop count; the console logs each `goto`'s region count and how long it took.

@@ -40,7 +40,10 @@ public final class BakeService {
     private final RegionBaker baker;
     private final PriorityBlockingQueue<Runnable> queue =
             new PriorityBlockingQueue<>(64, Comparator.comparing(r -> (BakeTask) r));
-    private final ExecutorService pool;
+    private final ThreadPoolExecutor pool;
+    private final int baseWorkers;
+    /** WAITING tasks queued but not yet started; drives the burst above baseWorkers. */
+    private final AtomicInteger urgentQueued = new AtomicInteger();
     /** Queued-but-not-yet-running tasks, so they can be promoted or dropped. */
     private final Map<Long, BakeTask> queued = new ConcurrentHashMap<>();
     private final AtomicLong sequenced = new AtomicLong();
@@ -67,13 +70,46 @@ public final class BakeService {
             t.setDaemon(true);
             return t;
         };
-        int size = Math.max(1, workers);
+        this.baseWorkers = Math.max(1, workers);
         // Priority-ordered rather than FIFO: a fast or multi-directional party queues
         // regions faster than they bake, and the head of a FIFO queue is soon work
         // nobody is waiting for while a player sits blocked behind it. Tasks are run
         // via execute() so they reach the queue as the Comparable BakeTask itself —
         // submit() would wrap them in a FutureTask and lose the ordering.
-        this.pool = new ThreadPoolExecutor(size, size, 0L, TimeUnit.MILLISECONDS, queue, factory);
+        this.pool = new ThreadPoolExecutor(baseWorkers, baseWorkers, 0L, TimeUnit.MILLISECONDS,
+                queue, factory);
+    }
+
+    /**
+     * Extra threads allowed while players are blocked, so an urgent bake need not wait
+     * for a prefetch to finish first.
+     */
+    private static final int URGENT_BURST_CAP = 4;
+
+    /**
+     * Grow the pool while WAITING work is queued, and shrink back as it starts.
+     *
+     * <p>Priority alone only decides who is <em>next</em>; it cannot preempt a bake
+     * already running. With every worker busy on prefetch, a player asking for a
+     * {@code goto} still waited a full bake for a thread — which looks exactly like
+     * priority not working. Adding a thread lets that work start immediately, and the
+     * priority queue guarantees the new thread takes the urgent task. The burst is
+     * spent only while somebody is actually blocked, so the configured worker count
+     * still governs steady-state load.
+     */
+    private void adjustUrgentBurst(int pendingUrgent) {
+        // Never more than double the configured concurrency: `workers` is the admin's
+        // statement about what the host (CPU, network, container limits) can take.
+        int cap = Math.min(URGENT_BURST_CAP, baseWorkers);
+        int target = baseWorkers + Math.min(Math.max(pendingUrgent, 0), cap);
+        // maximumPoolSize must never be below corePoolSize; order the two accordingly.
+        if (target > pool.getCorePoolSize()) {
+            pool.setMaximumPoolSize(target);
+            pool.setCorePoolSize(target);
+        } else if (target < pool.getCorePoolSize()) {
+            pool.setCorePoolSize(target);
+            pool.setMaximumPoolSize(target);
+        }
     }
 
     /** Relative urgency of a bake. Declaration order is the queue order. */
@@ -122,6 +158,10 @@ public final class BakeService {
         @Override
         public void run() {
             queued.remove(key, this); // no longer cancellable: it is running
+            if (priority == Priority.WAITING) {
+                // Started, so it no longer needs a thread held open for it.
+                adjustUrgentBurst(urgentQueued.decrementAndGet());
+            }
             runBake(worldDir, rx, rz, key);
         }
     }
@@ -295,6 +335,9 @@ public final class BakeService {
     private void enqueue(Priority priority, long k, File worldDir, int rx, int rz) {
         BakeTask task = new BakeTask(priority, distanceToNearestPlayer(rx, rz), k, worldDir, rx, rz);
         queued.put(k, task);
+        if (priority == Priority.WAITING) {
+            adjustUrgentBurst(urgentQueued.incrementAndGet());
+        }
         pool.execute(task);
     }
 
@@ -351,6 +394,24 @@ public final class BakeService {
 
     public int queuedCount() {
         return queued.size();
+    }
+
+    /** Queued (not yet started) counts indexed by {@link Priority#ordinal()}. */
+    public int[] queuedByPriority() {
+        int[] counts = new int[Priority.values().length];
+        for (BakeTask task : queued.values()) {
+            counts[task.priority.ordinal()]++;
+        }
+        return counts;
+    }
+
+    /** Bakes actually running right now, and the threads currently allowed. */
+    public int runningCount() {
+        return pool.getActiveCount();
+    }
+
+    public int workerCount() {
+        return pool.getCorePoolSize();
     }
 
     public long droppedCount() {

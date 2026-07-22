@@ -135,8 +135,13 @@ public final class ArnisCommand implements TabExecutor {
                     + " (in flight: " + svc.inFlightCount()
                     + ", ok: " + svc.completedCount()
                     + ", failed: " + svc.failedCount() + ")");
+            int[] byPriority = svc.queuedByPriority();
             sender.sendMessage("  queued: " + svc.queuedCount()
-                    + " (dropped as stale: " + svc.droppedCount() + ")");
+                    + " (waiting " + byPriority[BakeService.Priority.WAITING.ordinal()]
+                    + ", prefetch " + byPriority[BakeService.Priority.PREFETCH.ordinal()]
+                    + ", repair " + byPriority[BakeService.Priority.REPAIR.ordinal()] + ")");
+            sender.sendMessage("  running: " + svc.runningCount() + "/" + svc.workerCount()
+                    + " worker(s), dropped as stale: " + svc.droppedCount());
             sender.sendMessage("  awaiting repair: " + svc.dirtyCount()
                     + (c.repairUnbaked ? "" : " [repair disabled]"));
         }
@@ -245,11 +250,20 @@ public final class ArnisCommand implements TabExecutor {
         // that void is then persisted and never re-baked.
         List<int[]> regions = plugin.regionsAroundView(x, z);
         int pending = 0;
+        int alreadyRunning = 0;
         for (int[] r : regions) {
             if (!svc.isKnown(r[0], r[1])) {
                 pending++;
+            } else if (!svc.isBaked(r[0], r[1])) {
+                // Queued or mid-bake already: a running one cannot be preempted, so
+                // this is the part of the wait that priority cannot shorten.
+                alreadyRunning++;
             }
         }
+        long startedAt = System.currentTimeMillis();
+        plugin.getLogger().info("goto " + lat + "," + lng + " -> region " + rx + "," + rz
+                + ": " + regions.size() + " region(s) in the arrival view, " + pending
+                + " to queue, " + alreadyRunning + " already queued/running.");
 
         if (pending == 0) {
             sender.sendMessage(String.format("Going to %.5f,%.5f -> MC %d,%d (region %d,%d)...",
@@ -279,6 +293,8 @@ public final class ArnisCommand implements TabExecutor {
                 for (int[] done : regions) {
                     plugin.reloadRegionChunks(done[0], done[1]);
                 }
+                plugin.getLogger().info("goto ready in "
+                        + ((System.currentTimeMillis() - startedAt) / 1000) + "s.");
                 if (!destOk[0]) {
                     sender.sendMessage("Bake failed for that location.");
                     return;
