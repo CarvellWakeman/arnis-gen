@@ -14,7 +14,11 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * The {@code /arnis} admin command.
+ * The {@code /arnis} command, available to every player ({@code arnis.use}).
+ *
+ * <p>The two subcommands that queue bakes need {@code arnis.bake} on top (op by
+ * default): a region is minutes of CPU and megabytes of disk, and nothing limits
+ * how often a sender may ask for one.
  *
  * <ul>
  *   <li>{@code /arnis status} — show generator config and bake-pool stats.
@@ -33,8 +37,18 @@ public final class ArnisCommand implements TabExecutor {
     private static final String USAGE = "Usage: /arnis <status|prewarm [radius]"
             + "|goto <lat> <lng>|reload [radius]|rebake [radius]>";
 
+    /** Usage without the bake subcommands, for senders who cannot run them. */
+    private static final String USAGE_NO_BAKE =
+            "Usage: /arnis <status|goto <lat> <lng>|reload [radius]>";
+
+    /** Op-only by default; gates the subcommands that queue bakes. */
+    private static final String BAKE = "arnis.bake";
+
     private static final List<String> SUBCOMMANDS =
             List.of("status", "prewarm", "goto", "reload", "rebake");
+
+    /** The subset of {@link #SUBCOMMANDS} that {@link #BAKE} gates. */
+    private static final List<String> BAKE_SUBCOMMANDS = List.of("prewarm", "rebake");
 
     /** Suggested radii — small values, since each region is a bake. */
     private static final List<String> RADII = List.of("1", "2", "3");
@@ -48,24 +62,43 @@ public final class ArnisCommand implements TabExecutor {
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (args.length == 0) {
-            sender.sendMessage(USAGE);
+            sender.sendMessage(usage(sender));
             return true;
         }
         switch (args[0].toLowerCase()) {
             case "status":
                 return status(sender);
             case "prewarm":
-                return prewarm(sender, args);
+                return !allowBake(sender) || prewarm(sender, args);
             case "goto":
                 return gotoLocation(sender, args);
             case "reload":
                 return reload(sender, args);
             case "rebake":
-                return rebake(sender, args);
+                return !allowBake(sender) || rebake(sender, args);
             default:
-                sender.sendMessage("Unknown subcommand. " + USAGE);
+                sender.sendMessage("Unknown subcommand. " + usage(sender));
                 return true;
         }
+    }
+
+    /**
+     * Whether {@code sender} may queue bakes, telling them so if not. Callers swallow
+     * the refusal ({@code !allowBake(sender) || run(...)}) rather than returning
+     * {@code false}, so Bukkit does not follow it with the full usage line — which
+     * names the very subcommands the sender has just been refused.
+     */
+    private static boolean allowBake(CommandSender sender) {
+        if (sender.hasPermission(BAKE)) {
+            return true;
+        }
+        sender.sendMessage("You don't have permission to queue bakes (" + BAKE + ").");
+        return false;
+    }
+
+    /** The usage line listing only what {@code sender} may actually run. */
+    private static String usage(CommandSender sender) {
+        return sender.hasPermission(BAKE) ? USAGE : USAGE_NO_BAKE;
     }
 
     /**
@@ -82,12 +115,18 @@ public final class ArnisCommand implements TabExecutor {
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length <= 1) {
-            return matching(args.length == 0 ? "" : args[0], SUBCOMMANDS);
+            List<String> offered = new ArrayList<>(SUBCOMMANDS);
+            if (!sender.hasPermission(BAKE)) {
+                offered.removeAll(BAKE_SUBCOMMANDS);
+            }
+            return matching(args.length == 0 ? "" : args[0], offered);
         }
         switch (args[0].toLowerCase(Locale.ROOT)) {
             case "prewarm":
-            case "reload":
             case "rebake":
+                return args.length == 2 && sender.hasPermission(BAKE)
+                        ? matching(args[1], RADII) : List.of();
+            case "reload":
                 return args.length == 2 ? matching(args[1], RADII) : List.of();
             case "goto":
                 ArnisConfig c = plugin.config();
