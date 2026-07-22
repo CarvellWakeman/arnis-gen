@@ -281,18 +281,28 @@ include the CA certificates it reads from the OS trust store.
 
 ## Commands
 
-All require the `arnis.admin` permission (op by default). A second permission,
-`arnis.bypass`, exempts a player from the terrain barrier; it is granted to nobody by
-default, operators included, since flying past the frontier is what creates the holes
-the barrier prevents.
+All require `arnis.use`, which every player has by default — exploring by coordinate is
+the point of an arnis world. `prewarm` and `rebake` additionally require `arnis.bake`,
+which only operators hold: a region is minutes of CPU and ~4–5 MB on disk, and nothing
+rate-limits how often a sender may ask for one. Both are ordinary permission nodes, so
+a permissions plugin can hand `arnis.bake` to a trusted group, or negate `arnis.use` on
+the default group to put everything back in staff hands.
 
-| Command | Effect |
-|---|---|
-| `/arnis status` | Show config and bake-pool stats (baked / in-flight / ok / failed). |
-| `/arnis goto <lat> <lng>` | Teleport to a real-world coordinate, baking everything the arrival view reaches first. Accepts `lat,lng` or `lat lng`. |
-| `/arnis prewarm [radius]` | Bake the regions within `radius` around you now (default 1). |
-| `/arnis reload [radius]` | Refresh already-loaded chunks from disk (e.g. after a prewarm). |
-| `/arnis rebake [radius]` | Force-regenerate regions around you *even if already on disk* — repairs void holes and terrain baked with older settings. |
+A third permission, `arnis.bypass`, exempts a player from the terrain barrier; it is
+granted to nobody by default, operators included, since flying past the frontier is
+what creates the holes the barrier prevents.
+
+| Command | Permission | Effect |
+|---|---|---|
+| `/arnis status` | `arnis.use` | Show config and bake-pool stats (baked / in-flight / ok / failed). |
+| `/arnis goto <lat> <lng>` | `arnis.use` | Teleport to a real-world coordinate, baking everything the arrival view reaches first. Accepts `lat,lng` or `lat lng`. |
+| `/arnis reload [radius]` | `arnis.use` | Refresh already-loaded chunks from disk (e.g. after a prewarm). |
+| `/arnis prewarm [radius]` | `arnis.bake` | Bake the regions within `radius` around you now (default 1). |
+| `/arnis rebake [radius]` | `arnis.bake` | Force-regenerate regions around you *even if already on disk* — repairs void holes and terrain baked with older settings. |
+
+Note that `goto` also queues bakes for the destination view, so a player with only
+`arnis.use` can still cause baking — bounded by where they can reach, not by a quota.
+On a public server, size the bake pool for that.
 
 ---
 

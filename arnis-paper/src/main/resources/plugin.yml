@@ -12,10 +12,17 @@ commands:
   arnis:
     description: Arnis terrain generator controls.
     usage: /arnis <status|prewarm [radius]|goto <lat> <lng>|reload [radius]|rebake [radius]>
-    permission: arnis.admin
+    permission: arnis.use
 permissions:
-  arnis.admin:
-    description: Manage the arnis generator.
+  arnis.use:
+    description: Use the read-only arnis commands (status, goto, reload).
+    # Everyone: exploring by coordinate is how players use an arnis world. The
+    # subcommands that cost real work are gated separately on arnis.bake.
+    default: true
+  arnis.bake:
+    description: Queue bakes with /arnis prewarm and /arnis rebake.
+    # Ops only: each region is minutes of CPU and ~4-5 MB on disk, and nothing
+    # rate-limits how often a player may ask.
     default: op
   arnis.bypass:
     description: Ignore the terrain barrier and fly into unbaked space.
