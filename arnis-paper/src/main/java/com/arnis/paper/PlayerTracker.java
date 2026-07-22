@@ -40,6 +40,13 @@ public final class PlayerTracker extends BukkitRunnable {
     /** Cap on predicted lookahead, so a fast player cannot flood the pool. */
     private static final int MAX_LOOKAHEAD = 8;
 
+    /**
+     * How far past the prefetch radius queued work survives. Generous relative to
+     * {@link #MAX_LOOKAHEAD}, so a player who keeps going never drops the regions
+     * being baked for them — only one who turns around or logs off does.
+     */
+    private static final int STALE_MARGIN = MAX_LOOKAHEAD + 2;
+
     /** Ignore movement below this many blocks per scan as "not travelling". */
     private static final double MIN_TRAVEL = 4.0;
 
@@ -78,6 +85,17 @@ public final class PlayerTracker extends BukkitRunnable {
             return;
         }
         Set<Long> loaded = loadedRegions();
+
+        // Publish where everyone is, so the pool can rank new work by distance and
+        // drop work nobody is heading for.
+        List<long[]> playerRegions = new ArrayList<>(players.size());
+        for (Player player : players) {
+            playerRegions.add(new long[] {
+                player.getLocation().getBlockX() >> 9,
+                player.getLocation().getBlockZ() >> 9
+            });
+        }
+        bakeService.setPlayerRegions(playerRegions);
 
         int submitted = 0;
         for (Player player : players) {
@@ -121,6 +139,13 @@ public final class PlayerTracker extends BukkitRunnable {
         }
 
         repair(players, loaded);
+
+        // Anything still queued well outside everyone's reach is work for terrain
+        // no one is going to see; drop it so the pool spends its time nearer home.
+        int discarded = bakeService.pruneQueue(radius + STALE_MARGIN);
+        if (discarded > 0) {
+            plugin.getLogger().fine("Dropped " + discarded + " queued bake(s) nobody is heading for.");
+        }
     }
 
     /**
@@ -215,7 +240,7 @@ public final class PlayerTracker extends BukkitRunnable {
                 if (ok) {
                     plugin.reloadRegionChunks(rx, rz);
                 }
-            });
+            }, BakeService.Priority.REPAIR);
             queued++;
         }
     }

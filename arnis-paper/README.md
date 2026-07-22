@@ -76,4 +76,7 @@ Three mechanisms keep players on baked terrain, in order of importance:
   holds resident is best-effort — it caches an open region-file handle, so an external
   re-bake of it may not show until a **restart**.
 - Baking is per region on a worker thread and fetches map data over the network, so a
-  fast player or a wide `prewarm` can build a long queue.
+  fast player or a wide `prewarm` can build a long queue. `BakeService` works it in
+  priority order (whatever a player is blocked on, then prefetch nearest-first, then
+  repairs), promotes a queued region when a more urgent caller asks for it, and drops
+  queued work nobody is heading for.

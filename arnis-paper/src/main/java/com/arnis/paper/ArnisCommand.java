@@ -135,6 +135,8 @@ public final class ArnisCommand implements TabExecutor {
                     + " (in flight: " + svc.inFlightCount()
                     + ", ok: " + svc.completedCount()
                     + ", failed: " + svc.failedCount() + ")");
+            sender.sendMessage("  queued: " + svc.queuedCount()
+                    + " (dropped as stale: " + svc.droppedCount() + ")");
             sender.sendMessage("  awaiting repair: " + svc.dirtyCount()
                     + (c.repairUnbaked ? "" : " [repair disabled]"));
         }
@@ -282,7 +284,7 @@ public final class ArnisCommand implements TabExecutor {
                     return;
                 }
                 arriveAt(sender, world, lat, lng, x, z);
-            });
+            }, BakeService.Priority.WAITING);
         }
         return true;
     }

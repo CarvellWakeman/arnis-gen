@@ -5,14 +5,17 @@ import org.bukkit.plugin.Plugin;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -35,7 +38,15 @@ public final class BakeService {
 
     private final Plugin plugin;
     private final RegionBaker baker;
+    private final PriorityBlockingQueue<Runnable> queue =
+            new PriorityBlockingQueue<>(64, Comparator.comparing(r -> (BakeTask) r));
     private final ExecutorService pool;
+    /** Queued-but-not-yet-running tasks, so they can be promoted or dropped. */
+    private final Map<Long, BakeTask> queued = new ConcurrentHashMap<>();
+    private final AtomicLong sequenced = new AtomicLong();
+    private final AtomicLong dropped = new AtomicLong();
+    /** Latest player region positions, for ranking and pruning. Replaced wholesale. */
+    private volatile List<long[]> playerRegions = List.of();
     private final Set<Long> baked = ConcurrentHashMap.newKeySet();
     private final Set<Long> inFlight = ConcurrentHashMap.newKeySet();
     /** Regions with a region file the server generated itself — candidates for repair. */
@@ -56,7 +67,63 @@ public final class BakeService {
             t.setDaemon(true);
             return t;
         };
-        this.pool = Executors.newFixedThreadPool(Math.max(1, workers), factory);
+        int size = Math.max(1, workers);
+        // Priority-ordered rather than FIFO: a fast or multi-directional party queues
+        // regions faster than they bake, and the head of a FIFO queue is soon work
+        // nobody is waiting for while a player sits blocked behind it. Tasks are run
+        // via execute() so they reach the queue as the Comparable BakeTask itself —
+        // submit() would wrap them in a FutureTask and lose the ordering.
+        this.pool = new ThreadPoolExecutor(size, size, 0L, TimeUnit.MILLISECONDS, queue, factory);
+    }
+
+    /** Relative urgency of a bake. Declaration order is the queue order. */
+    public enum Priority {
+        /** A player is blocked on this right now: goto, a deferred teleport, the barrier. */
+        WAITING,
+        /** Baked ahead of a moving player, or asked for by a command. */
+        PREFETCH,
+        /** Repairing a region the server generated; nobody is waiting on it. */
+        REPAIR
+    }
+
+    /**
+     * A queued bake. Ordered by urgency, then by how far the region was from the
+     * nearest player when it was queued, then by arrival.
+     */
+    private final class BakeTask implements Runnable, Comparable<BakeTask> {
+        private final Priority priority;
+        private final int distance;
+        private final long sequence;
+        private final long key;
+        private final File worldDir;
+        private final int rx;
+        private final int rz;
+
+        BakeTask(Priority priority, int distance, long key, File worldDir, int rx, int rz) {
+            this.priority = priority;
+            this.distance = distance;
+            this.sequence = sequenced.getAndIncrement();
+            this.key = key;
+            this.worldDir = worldDir;
+            this.rx = rx;
+            this.rz = rz;
+        }
+
+        @Override
+        public int compareTo(BakeTask other) {
+            int byPriority = priority.compareTo(other.priority);
+            if (byPriority != 0) {
+                return byPriority;
+            }
+            int byDistance = Integer.compare(distance, other.distance);
+            return byDistance != 0 ? byDistance : Long.compare(sequence, other.sequence);
+        }
+
+        @Override
+        public void run() {
+            queued.remove(key, this); // no longer cancellable: it is running
+            runBake(worldDir, rx, rz, key);
+        }
     }
 
     static long key(int rx, int rz) {
@@ -183,6 +250,11 @@ public final class BakeService {
      * bake instead of dropping its teleport). Must be called on the main thread.
      */
     public void submit(File worldDir, int rx, int rz, Consumer<Boolean> onDone) {
+        submit(worldDir, rx, rz, onDone, Priority.PREFETCH);
+    }
+
+    /** {@link #submit} at an explicit {@link Priority}. */
+    public void submit(File worldDir, int rx, int rz, Consumer<Boolean> onDone, Priority priority) {
         long k = key(rx, rz);
 
         // Already baked: notify now (we're on the main thread).
@@ -198,9 +270,91 @@ public final class BakeService {
             waiters.computeIfAbsent(k, key -> new ArrayList<>()).add(onDone);
         }
         if (!inFlight.add(k)) {
-            return; // a bake is already running for this region
+            // A bake is already queued or running. If this caller is more urgent than
+            // whoever queued it, move it up — otherwise a player waits behind the
+            // prefetch that happened to ask first.
+            promote(k, priority);
+            return;
         }
-        startBake(worldDir, rx, rz, k);
+        enqueue(priority, k, worldDir, rx, rz);
+    }
+
+    /** Re-queue an already-queued region at a higher priority, if it has not started. */
+    private void promote(long k, Priority priority) {
+        BakeTask existing = queued.get(k);
+        if (existing == null || priority.compareTo(existing.priority) >= 0) {
+            return;
+        }
+        if (!queue.remove(existing)) {
+            return; // a worker already took it; it is running anyway
+        }
+        queued.remove(k, existing);
+        enqueue(priority, k, existing.worldDir, existing.rx, existing.rz);
+    }
+
+    private void enqueue(Priority priority, long k, File worldDir, int rx, int rz) {
+        BakeTask task = new BakeTask(priority, distanceToNearestPlayer(rx, rz), k, worldDir, rx, rz);
+        queued.put(k, task);
+        pool.execute(task);
+    }
+
+    /**
+     * Record where players are, for ranking new work and pruning old. Called from the
+     * tracker on the main thread; workers and {@link #submit} read the snapshot.
+     */
+    public void setPlayerRegions(List<long[]> regions) {
+        this.playerRegions = List.copyOf(regions);
+    }
+
+    /** Chebyshev distance in regions to the closest player, or 0 if nobody is online. */
+    private int distanceToNearestPlayer(int rx, int rz) {
+        int best = Integer.MAX_VALUE;
+        for (long[] p : playerRegions) {
+            best = Math.min(best, (int) Math.max(Math.abs(p[0] - rx), Math.abs(p[1] - rz)));
+        }
+        return best == Integer.MAX_VALUE ? 0 : best;
+    }
+
+    /**
+     * Drop queued work nobody is heading for any more.
+     *
+     * <p>A player who turns around or logs off leaves behind a tail of regions that
+     * would still be baked — minutes of network fetches for terrain no one will see,
+     * ahead of work that matters. Dropped regions are simply forgotten, so the tracker
+     * queues them again if anyone does come back.
+     *
+     * <p>Tasks with a waiter are never dropped: something (a teleport, a goto) is
+     * blocked on the callback. Must be called on the main thread, where {@code waiters}
+     * is safe to read.
+     *
+     * @return how many were dropped
+     */
+    public int pruneQueue(int maxDistance) {
+        int removed = 0;
+        for (BakeTask task : List.copyOf(queued.values())) {
+            if (task.priority == Priority.WAITING || waiters.containsKey(task.key)) {
+                continue;
+            }
+            if (distanceToNearestPlayer(task.rx, task.rz) <= maxDistance) {
+                continue;
+            }
+            if (!queue.remove(task)) {
+                continue; // already running
+            }
+            queued.remove(task.key, task);
+            inFlight.remove(task.key);
+            removed++;
+        }
+        dropped.addAndGet(removed);
+        return removed;
+    }
+
+    public int queuedCount() {
+        return queued.size();
+    }
+
+    public long droppedCount() {
+        return dropped.get();
     }
 
     /**
@@ -215,48 +369,52 @@ public final class BakeService {
      * in-flight bakes. Must be called on the main thread.
      */
     public void rebake(File worldDir, int rx, int rz, Consumer<Boolean> onDone) {
+        rebake(worldDir, rx, rz, onDone, Priority.PREFETCH);
+    }
+
+    /** {@link #rebake} at an explicit {@link Priority}. */
+    public void rebake(File worldDir, int rx, int rz, Consumer<Boolean> onDone, Priority priority) {
         long k = key(rx, rz);
         attempts.remove(k); // an explicit rebake retries a region we had given up on
         if (onDone != null) {
             waiters.computeIfAbsent(k, key -> new ArrayList<>()).add(onDone);
         }
         if (!inFlight.add(k)) {
-            return; // a bake is already running for this region
+            promote(k, priority);
+            return;
         }
-        startBake(worldDir, rx, rz, k);
+        enqueue(priority, k, worldDir, rx, rz);
     }
 
-    private void startBake(File worldDir, int rx, int rz, long k) {
-        pool.submit(() -> {
-            RegionBaker.Result res = baker.bake(worldDir, rx, rz);
-            // Record provenance here, on the worker, so it is durable even if the
-            // server dies before the completion callback runs.
-            if (res.ok && !BakedIndex.mark(worldDir, rx, rz)) {
-                plugin.getLogger().warning("Could not write the arnis-baked marker for region "
-                        + rx + "," + rz + "; it may be re-baked unnecessarily after a restart.");
+    private void runBake(File worldDir, int rx, int rz, long k) {
+        RegionBaker.Result res = baker.bake(worldDir, rx, rz);
+        // Record provenance here, on the worker, so it is durable even if the
+        // server dies before the completion callback runs.
+        if (res.ok && !BakedIndex.mark(worldDir, rx, rz)) {
+            plugin.getLogger().warning("Could not write the arnis-baked marker for region "
+                    + rx + "," + rz + "; it may be re-baked unnecessarily after a restart.");
+        }
+        runOnMain(() -> {
+            inFlight.remove(k);
+            if (res.ok) {
+                baked.add(k);
+                dirty.remove(k);
+                attempts.remove(k);
+                completed.incrementAndGet();
+            } else {
+                failed.incrementAndGet();
+                int tries = attempts.merge(k, 1, Integer::sum);
+                if (tries >= MAX_ATTEMPTS) {
+                    plugin.getLogger().warning("Region " + rx + "," + rz + " failed to bake "
+                            + tries + " times; giving up on it until a restart or '/arnis rebake'.");
+                }
             }
-            runOnMain(() -> {
-                inFlight.remove(k);
-                if (res.ok) {
-                    baked.add(k);
-                    dirty.remove(k);
-                    attempts.remove(k);
-                    completed.incrementAndGet();
-                } else {
-                    failed.incrementAndGet();
-                    int tries = attempts.merge(k, 1, Integer::sum);
-                    if (tries >= MAX_ATTEMPTS) {
-                        plugin.getLogger().warning("Region " + rx + "," + rz + " failed to bake "
-                                + tries + " times; giving up on it until a restart or '/arnis rebake'.");
-                    }
+            List<Consumer<Boolean>> callbacks = waiters.remove(k);
+            if (callbacks != null) {
+                for (Consumer<Boolean> cb : callbacks) {
+                    cb.accept(res.ok);
                 }
-                List<Consumer<Boolean>> callbacks = waiters.remove(k);
-                if (callbacks != null) {
-                    for (Consumer<Boolean> cb : callbacks) {
-                        cb.accept(res.ok);
-                    }
-                }
-            });
+            }
         });
     }
 

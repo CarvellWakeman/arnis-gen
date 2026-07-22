@@ -132,10 +132,15 @@ just the scannable checklist of deliverables.
   player could walk into it, and no void regions were produced.
 - [ ] **Phase 3 — Polish.** In rough priority order:
   - [x] **Teleport safety** — done; see §2 Safe teleports.
-  - [ ] **Queue discipline** — bakes are queued unbounded and FIFO, so a fast or
-    multi-directional party can build a long backlog whose head is no longer near
-    anybody. Prioritise by distance to the nearest player and drop entries nobody is
-    heading for.
+  - [x] **Queue discipline** — the pool was FIFO, so a player blocked on a `goto` waited
+    behind every prefetch that happened to be queued first. It now runs a
+    `PriorityBlockingQueue` ordered by urgency (WAITING — goto, deferred teleports, the
+    barrier — then PREFETCH nearest-first, then REPAIR), then by distance to the nearest
+    player when queued, then arrival. A request for a region already queued **promotes**
+    it rather than waiting behind its original priority, and each tracker scan **drops**
+    queued work that is no longer near anybody (never anything with a waiter). Tasks go
+    through `execute()` rather than `submit()`, which would wrap them in a `FutureTask`
+    and lose the ordering.
   - [ ] **Throughput** — bake several regions per arnis invocation to amortise the
     Overpass/elevation fetch, the dominant cost of a cold region.
   - [ ] **Live region-file invalidation** — make a repaired region visible without a

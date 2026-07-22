@@ -393,4 +393,8 @@ the barrier prevents.
 - One region can only be baked before a player reaches it, not while they stand on it.
 - Bakes are queued per region and are network-bound, so a fast-moving player (or several
   going different ways) can build a long queue. The barrier means this shows up as a
-  wait at the frontier rather than as missing terrain.
+  wait at the frontier rather than as missing terrain. The queue is worked in priority
+  order — whatever a player is blocked on first (`goto`, a deferred teleport, the
+  barrier), then prefetch nearest-first, then repairs — and work for terrain nobody is
+  heading for any more is dropped. `/arnis status` shows the queue length and how many
+  have been dropped.

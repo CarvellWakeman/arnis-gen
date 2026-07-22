@@ -181,7 +181,7 @@ public final class MovementBarrier implements Listener {
                 } finally {
                     reissuing.remove(id);
                 }
-            });
+            }, BakeService.Priority.WAITING);
         }
     }
 
@@ -220,7 +220,7 @@ public final class MovementBarrier implements Listener {
             if (bakeService.shouldSkip(rx, rz) || isRegionLoaded(rx, rz)) {
                 continue;
             }
-            bakeService.submit(worldDir, rx, rz, null);
+            bakeService.submit(worldDir, rx, rz, null, BakeService.Priority.WAITING);
         }
     }
 
